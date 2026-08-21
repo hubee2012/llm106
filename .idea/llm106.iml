@@ -5,5 +5,6 @@
     <orderEntry type="jdk" jdkName="~/anaconda3/envs/llm106" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="minimind" />
+    <orderEntry type="module" module-name="llmmind" />
   </component>
 </module>

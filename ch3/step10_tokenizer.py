@@ -8,18 +8,16 @@ from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from tokenizers.normalizers import NFD, Lowercase
 from tokenizers import normalizers
-import logging
-from tqdm import tqdm
-import gc
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)  # 上一级目录
 sys.path.insert(0, parent_dir)  # 将父目录添加到Python路径
 
 from configs.llm_utils import llm_data_dir, llm_model_dir
 
-sys.path.append('../')
+import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 # 配置参数
 VOCAB_SIZE = 6400
@@ -27,7 +25,7 @@ MIN_FREQUENCY = 5
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "[EOS]", "[BOS]"]
 TRAIN_DATA_PATH =llm_data_dir+ "/pretrain_t2t.jsonl"
 TOKENIZER_SAVE_PATH = llm_model_dir+"/bpe_tokenizer.json"
-
+import logging
 # 批量处理参数
 BATCH_SIZE = 1000  # 每次处理多少行
 MAX_LINES = None  # 限制处理行数，None表示全部处理，测试时可以设置小一点
