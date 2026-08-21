@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 VOCAB_SIZE = 6400
 MIN_FREQUENCY = 3
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "[EOS]", "[BOS]"]
-TRAIN_DATA_PATH =llm_data_dir+ "/sft_t2t_mini.jsonl"
+TRAIN_DATA_PATH =llm_data_dir+ "/pretrain_t2t.jsonl"
 TOKENIZER_SAVE_PATH = llm_model_dir+"/bpe_tokenizer.json"
 
 # 批量处理参数
@@ -59,8 +59,14 @@ def stream_jsonl(file_path, max_lines=None):
                     contents = [item.get('content') for item in data.get('conversations', []) if item.get('content')]
                     if contents:
                         yield "\n".join(contents)
-                    else:
-                        print(data)
+                    # else:
+                    #     print(data)
+
+                    contents = [data.get('text')]
+                    if contents:
+                        yield "\n".join(contents)
+                    # else:
+                    #     print(data)
 
                 except json.JSONDecodeError as e:
                     logger.warning(f"第{line_count}行JSON解析失败: {e}")
@@ -295,9 +301,9 @@ def main():
         logger.info(f"原始: {test_text}")
         logger.info(f"encoded.ids: {encoded.ids}")
         logger.info(f"编码解码后: {decoded}")
-        encoded_txt=str(encoded).replace('##','')
-        logger.info(f"编码解码后: {encoded_txt}")
-        logger.info(f"验证结果: {'✓ 成功' if test_text == encoded_txt else '✗ 失败'}")
+        decoded_txt=str(decoded).replace('##','').replace(" ","").replace('</w>','')
+        logger.info(f"编码解码后: {decoded_txt}")
+        logger.info(f"验证结果: {'✓ 成功' if test_text == decoded_txt else '✗ 失败'}")
 
         logger.info("\n" + "=" * 50)
         logger.info("Tokenizer训练完成！")
