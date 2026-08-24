@@ -42,7 +42,7 @@ class AssembleBlock(nn.Module):
         return hidden_states, present_key_value
 
 
-class Embedding(nn.Module):
+class RopeModel(nn.Module):
     def __init__(self,
                 config:LlmConfig
                 ):

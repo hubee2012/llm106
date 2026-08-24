@@ -1,7 +1,10 @@
+from torch import nn
 from transformers import PreTrainedModel, GenerationMixin
+from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 
 from ch3.LlmConfig import Llm106Config
-
+from ch3.step20_embedding import RopeModel
+import math, torch, torch.nn.functional as F
 
 class Llm106Model(PreTrainedModel, GenerationMixin):
     config_class = Llm106Config
@@ -10,7 +13,7 @@ class Llm106Model(PreTrainedModel, GenerationMixin):
     def __init__(self, config: Llm106Config = None):
         self.config = config or Llm106Config()
         super().__init__(self.config)
-        self.model = MiniMindModel(self.config)
+        self.model = RopeModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         if self.config.tie_word_embeddings: self.model.embed_tokens.weight = self.lm_head.weight
         self.post_init()
@@ -71,3 +74,9 @@ class Llm106Model(PreTrainedModel, GenerationMixin):
         if streamer: streamer.end()
         if kwargs.get("return_kv"): return {'generated_ids': input_ids, 'past_kv': past_key_values}
         return input_ids
+
+
+
+
+
+
