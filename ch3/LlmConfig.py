@@ -1,8 +1,10 @@
+import math
+
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
 
 
 class Llm106Config(PretrainedConfig):
-    model_type = "minimind"
+    model_type = "llm106"
     def __init__(self, hidden_size=768, num_hidden_layers=8, use_moe=False, **kwargs):
         super().__init__(**kwargs)
         self.hidden_size = hidden_size

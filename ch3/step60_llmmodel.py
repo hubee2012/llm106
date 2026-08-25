@@ -1,10 +1,27 @@
 from torch import nn
-from transformers import PreTrainedModel, GenerationMixin
+from transformers import PreTrainedModel, GenerationMixin, AutoTokenizer
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 
 from ch3.LlmConfig import Llm106Config
 from ch3.step20_embedding import RopeOperation
 import math, torch, torch.nn.functional as F
+
+from ch3.utils import get_model_params, Logger
+
+
+def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    model = Llm106Model(lm_config)
+
+    if from_weight!= 'none':
+        moe_suffix = '_moe' if lm_config.use_moe else ''
+        weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+        weights = torch.load(weight_path, map_location=device)
+        model.load_state_dict(weights, strict=False)
+
+    get_model_params(model, lm_config)
+    Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
+    return model.to(device), tokenizer
 
 class Llm106Model(PreTrainedModel, GenerationMixin):
     config_class = Llm106Config

@@ -27,7 +27,7 @@ TRAIN_DATA_PATH =llm_data_dir+ "/pretrain_t2t.jsonl"
 TOKENIZER_SAVE_PATH = llm_model_dir+"/bpe_tokenizer.json"
 import logging
 # 批量处理参数
-BATCH_SIZE = 600  # 每次处理多少行
+BATCH_SIZE = 500  # 每次处理多少行
 MAX_LINES = None  # 限制处理行数，None表示全部处理，测试时可以设置小一点
 
 
@@ -175,7 +175,7 @@ def train_bpe_tokenizer_streaming(file_path, vocab_size, special_tokens,
 
 
 def train_with_progress(file_path, vocab_size, special_tokens,
-                        min_frequency=5, batch_size=10000, max_lines=None):
+                        min_frequency=5, batch_size=1000, max_lines=None):
     """
     带进度显示的流式训练
     """

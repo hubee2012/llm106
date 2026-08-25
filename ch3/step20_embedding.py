@@ -3,6 +3,8 @@ import time
 import os
 import torch
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
+from torch.optim import optimizer
 from transformers import AutoTokenizer
 import argparse
 from ch3 import LlmConfig
@@ -10,6 +12,7 @@ from ch3.dataset_pretrain import PretrainDataset
 from ch3.step30_attention import Attention
 from ch3.step40_norm import RMSNorm
 from ch3.step50_feedforward import FeedForward, MOEFeedForward
+from ch3.utils import lm_checkpoint, Logger, is_main_process
 from configs.llm_utils import llm_data_dir, llm_model_dir
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
@@ -18,13 +21,14 @@ import torch.nn.functional as F
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
 from contextlib import nullcontext
 from utils import get_lr
+import swanlab
 
 token_path='./'
 
 TOKENIZER_SAVE_PATH = llm_data_dir+"/pretrain_t2t_mini.jsonl"
 
 class AssembleBlock(nn.Module):
-    def __init__(self, layer_id: int, config: LlmConfig):
+    def __init__(self, layer_id: int, config: LlmConfig.Llm106Config):
         super().__init__()
         self.self_attn = Attention(config)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -42,9 +46,11 @@ class AssembleBlock(nn.Module):
         return hidden_states, present_key_value
 
 
+
+
 class RopeOperation(nn.Module):
     def __init__(self,
-                config:LlmConfig
+                config: LlmConfig.Llm106Config
                 ):
         super().__init__()
         self.vocab_size=config.vocab_size
@@ -54,7 +60,7 @@ class RopeOperation(nn.Module):
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         self.dropout = nn.Dropout(config.dropout)
-        self.layers = nn.ModuleList([AssembleBlock(l, config) for l in range(self.num_hidden_layers)])
+        self.layers = nn.ModuleList([AssembleBlock(l, config) for l in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
 
@@ -66,7 +72,7 @@ class RopeOperation(nn.Module):
     def rope_YaRN(self,dim: int, end: int = int(32 * 1024), rope_base: float = 1e6, rope_scaling: dict = None):
         # (rope_base**(torch.arange(0,dim,2)[:dim//2].float()/dim))为1到1e6之间增函数
         # 1.0/(rope_base**(torch.arange(0,dim,2)[:dim//2].float()/dim))为小于1降函数，位置越靠前频率越高，相当于将data调制到了freqs频率(data*cos(freqs*data))
-        freqs, attn_factor = 1.0 / (self.rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)), 1.0
+        freqs, attn_factor = 1.0 / (rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)), 1.0
         if rope_scaling is not None:  # YaRN: f'(i) = f(i)((1-γ) + γ/s), where γ∈[0,1] is linear ramp
             orig_max, factor, beta_fast, beta_slow, attn_factor = (
                 rope_scaling.get("original_max_position_embeddings", 2048),
@@ -89,6 +95,8 @@ class RopeOperation(nn.Module):
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
+        if self.embed_tokens.weight.device != input_ids.device:
+            self.to(input_ids.device)
         if hasattr(past_key_values, 'layers'): past_key_values = None
         past_key_values = past_key_values or [None] * len(self.layers)
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
@@ -116,19 +124,23 @@ class RopeOperation(nn.Module):
         return hidden_states, presents, aux_loss
 
 
-
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="llm106-")
-    parser.add_argument('--data_path', type=str, default=llm_data_dir+"/pretrain_t2t_mini.jsonl", help='训练数据')
+    parser.add_argument('--data_path', type=str, default=llm_data_dir + "/pretrain_t2t_mini.jsonl", help='训练数据')
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
+    parser.add_argument('--max_seq_len', default=240, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
+    parser.add_argument("--num_workers", type=int, default=6, help="数据加载线程数")
+    parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model", help="模型保存目录")
+    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
+    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
+
     args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(token_path,local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(token_path, local_files_only=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -144,44 +156,38 @@ if __name__ == "__main__":
     )
 
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
+                                       use_moe=bool(args.use_moe))
+    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight,
+                             save_dir='../../../checkpoints') if args.from_resume == 1 else None
     model = RopeOperation(lm_config)
 
-
     start_time = time.time()
-    start_step=0
+    start_step = 0
     last_step = start_step
+
     for epoch in range(args.epochs):
-        iters=len(loader)
+        iters = len(loader)
         for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
             input_ids = input_ids.to(args.device)
             labels = labels.to(args.device)
             last_step = step
 
-            res = model(input_ids, labels=labels)
+            # Forward pass
+            hidden_state, present, res = model(input_ids, labels=labels)
             loss = res.loss + res.aux_loss
-            loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
-            # autocast_ctx混合精度训练（Mixed Precision Training）的上下文管理器,自动将某些计算操作从 float32 降为 float16 或 bfloat16，加速计算并减少显存占用。
-            with autocast_ctx:
-                res = model(input_ids, labels=labels)
-                loss = res.loss + res.aux_loss
-                loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
-            # scaler 是 PyTorch 梯度缩放器（Gradient Scaler），它是混合精度训练（AMP）的配套工具，专门用来防止梯度下溢（Underflow）。
-            # 配合 autocast 使用，在反向传播前把 Loss 放大，防止半精度（float16）下梯度变成 0。
-            # float16 的有效数值范围很小（约 6e-5 到 65504）。梯度值通常非常小（比如 1e-6），在 float16 下会被直接舍入为 0，导致模型无法收敛。
-            scaler.scale(loss).backward()  # 乘以 scale_factor 保证不溢出。
+            loss = loss / args.accumulation_steps  # Normalize for gradient accumulation
 
+            # Direct backward pass (no mixed precision)
+            loss.backward()
+
+            # Gradient accumulation step
             if step % args.accumulation_steps == 0:
-                # 之前反向传播时，梯度被放大了（乘以 scale_factor）。clip_grad_norm_ 计算的是梯度的范数（Norm），如果梯度还被放大着，裁剪阈值就会失真。所以必须先反缩放回真实梯度值，再进行裁剪。
-                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-
-                scaler.step(optimizer)
-                scaler.update()
-
+                optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
+            # Logging
             if step % args.log_interval == 0 or step == iters:
                 spend_time = time.time() - start_time
                 current_loss = loss.item() * args.accumulation_steps
@@ -189,9 +195,12 @@ if __name__ == "__main__":
                 current_logits_loss = current_loss - current_aux_loss
                 current_lr = optimizer.param_groups[-1]['lr']
                 eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
-                Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
-                if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "epoch_time": eta_min})
-
+                Logger(
+                    f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
+                if swanlab:
+                    swanlab.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss,
+                                 "learning_rate": current_lr, "epoch_time": eta_min})
+            # Save checkpoint
             if (step % args.save_interval == 0 or step == iters) and is_main_process():
                 model.eval()
                 moe_suffix = '_moe' if lm_config.use_moe else ''
@@ -200,19 +209,13 @@ if __name__ == "__main__":
                 raw_model = getattr(raw_model, '_orig_mod', raw_model)
                 state_dict = raw_model.state_dict()
                 torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-                lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, scaler=scaler, epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints')
+                lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, epoch=epoch,
+                              step=step, swanlab=swanlab, save_dir='../../../checkpoints')
                 model.train()
                 del state_dict
 
-
+        # Handle remaining gradients at the end of epoch
         if last_step > start_step and last_step % args.accumulation_steps != 0:
-            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-
-
-
-
-

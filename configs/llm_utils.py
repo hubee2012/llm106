@@ -37,7 +37,6 @@ def read_wandb_config(config_rel_path="/home/hub/llm_data/config.txt", levels_up
     if not config_path.exists():
         logging.warning(f"配置文件不存在: {config_path}")
         return wandb_config
-
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f, 1):

@@ -12,8 +12,6 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer
 
-from ch3.step60_llmmodel import Llm106Model
-
 
 def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
@@ -108,19 +106,7 @@ def get_model_params(model, config):
     if active < total: Logger(f'Model Params: {total:.2f}M-A{active:.2f}M')
     else: Logger(f'Model Params: {total:.2f}M')
 
-def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    model = Llm106Model(lm_config)
 
-    if from_weight!= 'none':
-        moe_suffix = '_moe' if lm_config.use_moe else ''
-        weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-        weights = torch.load(weight_path, map_location=device)
-        model.load_state_dict(weights, strict=False)
-
-    get_model_params(model, lm_config)
-    Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
-    return model.to(device), tokenizer
 
 def Logger(content):
     if is_main_process():
