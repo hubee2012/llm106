@@ -46,8 +46,11 @@ class RopeOperation(nn.Module):
                 config:LlmConfig
                 ):
         super().__init__()
+        self.config = config
         self.vocab_size=config.vocab_size
         self.embedding_dim=config.hidden_size
+        self.num_hidden_layers = config.num_hidden_layers
+        self.rope_base = config.rope_theta
         self.embed_tokens=nn.Embedding(self.vocab_size,self.embedding_dim)
         freqs_cos, freqs_sin = self.rope_YaRN(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
@@ -65,7 +68,7 @@ class RopeOperation(nn.Module):
     def rope_YaRN(self,dim: int, end: int = int(32 * 1024), rope_base: float = 1e6, rope_scaling: dict = None):
         # (rope_base**(torch.arange(0,dim,2)[:dim//2].float()/dim))为1到1e6之间增函数
         # 1.0/(rope_base**(torch.arange(0,dim,2)[:dim//2].float()/dim))为小于1降函数，位置越靠前频率越高，相当于将data调制到了freqs频率(data*cos(freqs*data))
-        freqs, attn_factor = 1.0 / (self.rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)), 1.0
+        freqs, attn_factor = 1.0 / (rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)), 1.0
         if rope_scaling is not None:  # YaRN: f'(i) = f(i)((1-γ) + γ/s), where γ∈[0,1] is linear ramp
             orig_max, factor, beta_fast, beta_slow, attn_factor = (
                 rope_scaling.get("original_max_position_embeddings", 2048),
@@ -122,18 +125,40 @@ if __name__ == "__main__":
     # Training helpers live in ch3.utils. Import them only when this file is the
     # entry point so RopeOperation can load without pulling Llm106Model:
     # step20_embedding -> ch3.utils -> step60_llmmodel -> step20_embedding
+    from types import SimpleNamespace
+    from torch import optim
     from torch.nn.parallel import DistributedDataParallel
-    from ch3.utils import lm_checkpoint, Logger, is_main_process
+    from ch3.utils import get_lr, lm_checkpoint, Logger, is_main_process, init_distributed_mode, setup_seed
 
     parser = argparse.ArgumentParser(description="llm106-")
+    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument('--save_weight', default='pretrain', type=str, help="保存权重的前缀名")
     parser.add_argument('--data_path', type=str, default=llm_data_dir+"/pretrain_t2t_mini.jsonl", help='训练数据')
+    parser.add_argument('--tokenizer_path', type=str, default=token_path, help="分词器路径")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
+    parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
+    parser.add_argument("--batch_size", type=int, default=32, help="batch size")
+    parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
+    parser.add_argument("--num_workers", type=int, default=0, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
+    parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
+    parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
+    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
+    parser.add_argument('--max_seq_len', default=340, type=int, help="训练的最大截断长度")
+    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
+    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
     args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(token_path,local_files_only=True)
+    local_rank = init_distributed_mode()
+    if dist.is_initialized():
+        args.device = f"cuda:{local_rank}"
+    setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
+
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, local_files_only=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -141,9 +166,11 @@ if __name__ == "__main__":
     sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     loader = DataLoader(
         train_ds,
-        batch_sampler=sampler,
+        batch_size=args.batch_size,
+        sampler=sampler,
+        shuffle=sampler is None,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory="cuda" in args.device,
         prefetch_factor=2 if args.num_workers > 0 else None,
         persistent_workers=True if args.num_workers > 0 else False
     )
@@ -151,25 +178,62 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
-    model = RopeOperation(lm_config)
 
+    # Weights stay on CPU until this .to(); input_ids are already moved to args.device.
+    model = RopeOperation(lm_config)
+    lm_head = nn.Linear(lm_config.hidden_size, lm_config.vocab_size, bias=False)
+    if lm_config.tie_word_embeddings:
+        lm_head.weight = model.embed_tokens.weight
+    model = model.to(args.device)
+    lm_head = lm_head.to(args.device)
+
+    device_type = "cuda" if "cuda" in args.device else "cpu"
+    amp_dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=amp_dtype)
+    scaler = torch.cuda.amp.GradScaler(enabled=(device_type == "cuda" and args.dtype == "float16"))
+    trainable = list(model.parameters())
+    if not lm_config.tie_word_embeddings:
+        trainable += list(lm_head.parameters())
+    optimizer = optim.AdamW(trainable, lr=args.learning_rate)
+
+    wandb = None
+    if args.use_wandb and is_main_process():
+        import swanlab as wandb
+        wandb.init(project="llm106-embedding")
+
+    start_epoch, start_step = 0, 0
+    if ckp_data:
+        model.load_state_dict(ckp_data['model'])
+        optimizer.load_state_dict(ckp_data['optimizer'])
+        if 'scaler' in ckp_data:
+            scaler.load_state_dict(ckp_data['scaler'])
+        start_epoch = ckp_data.get('epoch', 0)
+        start_step = ckp_data.get('step', 0)
+
+    if dist.is_initialized():
+        model = DistributedDataParallel(model, device_ids=[local_rank])
 
     start_time = time.time()
-    start_step=0
     last_step = start_step
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
+        if sampler is not None:
+            sampler.set_epoch(epoch)
         iters=len(loader)
         for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
             input_ids = input_ids.to(args.device)
             labels = labels.to(args.device)
             last_step = step
+            lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
 
-            res = model(input_ids, labels=labels)
-            loss = res.loss + res.aux_loss
-            loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
             # autocast_ctx混合精度训练（Mixed Precision Training）的上下文管理器,自动将某些计算操作从 float32 降为 float16 或 bfloat16，加速计算并减少显存占用。
             with autocast_ctx:
-                res = model(input_ids, labels=labels)
+                hidden_states, _, aux_loss = model(input_ids)
+                logits = lm_head(hidden_states)
+                x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
+                loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
+                res = SimpleNamespace(loss=loss, aux_loss=aux_loss)
                 loss = res.loss + res.aux_loss
                 loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
             # scaler 是 PyTorch 梯度缩放器（Gradient Scaler），它是混合精度训练（AMP）的配套工具，专门用来防止梯度下溢（Underflow）。
@@ -180,7 +244,7 @@ if __name__ == "__main__":
             if step % args.accumulation_steps == 0:
                 # 之前反向传播时，梯度被放大了（乘以 scale_factor）。clip_grad_norm_ 计算的是梯度的范数（Norm），如果梯度还被放大着，裁剪阈值就会失真。所以必须先反缩放回真实梯度值，再进行裁剪。
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                torch.nn.utils.clip_grad_norm_(trainable, args.grad_clip)
 
                 scaler.step(optimizer)
                 scaler.update()
@@ -212,10 +276,11 @@ if __name__ == "__main__":
 
         if last_step > start_step and last_step % args.accumulation_steps != 0:
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            torch.nn.utils.clip_grad_norm_(trainable, args.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
+        start_step = 0
 
 
 
