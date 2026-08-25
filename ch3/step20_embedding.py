@@ -11,13 +11,13 @@ from ch3.step30_attention import Attention
 from ch3.step40_norm import RMSNorm
 from ch3.step50_feedforward import FeedForward, MOEFeedForward
 from configs.llm_utils import llm_data_dir, llm_model_dir
+from ch3.utils import get_lr, lm_checkpoint, Logger, is_main_process
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from typing import Tuple, Optional, List, Union
 import torch.nn.functional as F
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
 from contextlib import nullcontext
-from utils import get_lr
 
 token_path='./'
 

@@ -12,8 +12,6 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer
 
-from ch3.step60_llmmodel import Llm106Model
-
 
 def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
@@ -109,6 +107,10 @@ def get_model_params(model, config):
     else: Logger(f'Model Params: {total:.2f}M')
 
 def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
+    # Imported lazily to avoid a circular import:
+    # step20_embedding -> ch3.utils -> step60_llmmodel -> step20_embedding
+    from ch3.step60_llmmodel import Llm106Model
+
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = Llm106Model(lm_config)
 
