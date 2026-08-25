@@ -3,7 +3,7 @@ from transformers import PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 
 from ch3.LlmConfig import Llm106Config
-from ch3.step20_embedding import RopeModel
+from ch3.step20_embedding import RopeOperation
 import math, torch, torch.nn.functional as F
 
 class Llm106Model(PreTrainedModel, GenerationMixin):
@@ -13,7 +13,7 @@ class Llm106Model(PreTrainedModel, GenerationMixin):
     def __init__(self, config: Llm106Config = None):
         self.config = config or Llm106Config()
         super().__init__(self.config)
-        self.model = RopeModel(self.config)
+        self.model = RopeOperation(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         if self.config.tie_word_embeddings: self.model.embed_tokens.weight = self.lm_head.weight
         self.post_init()

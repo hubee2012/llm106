@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # 配置参数
 VOCAB_SIZE = 6400
-MIN_FREQUENCY = 5
+MIN_FREQUENCY = 10
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "[EOS]", "[BOS]"]
 TRAIN_DATA_PATH =llm_data_dir+ "/pretrain_t2t.jsonl"
 TOKENIZER_SAVE_PATH = llm_model_dir+"/bpe_tokenizer.json"
