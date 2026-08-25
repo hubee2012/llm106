@@ -155,7 +155,7 @@ def train_bpe_tokenizer_streaming(file_path, vocab_size, special_tokens,
         show_progress=True,
         continuing_subword_prefix="##",
         end_of_word_suffix="</w>",
-        limit_alphabet=1000,
+        limit_alphabet=600,
         max_token_length=16,
     )
 
