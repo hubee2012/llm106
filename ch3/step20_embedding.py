@@ -11,7 +11,6 @@ from ch3.step30_attention import Attention
 from ch3.step40_norm import RMSNorm
 from ch3.step50_feedforward import FeedForward, MOEFeedForward
 from configs.llm_utils import llm_data_dir, llm_model_dir
-from ch3.utils import get_lr, lm_checkpoint, Logger, is_main_process
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from typing import Tuple, Optional, List, Union
@@ -120,6 +119,12 @@ class RopeOperation(nn.Module):
 
 
 if __name__ == "__main__":
+    # Training helpers live in ch3.utils. Import them only when this file is the
+    # entry point so RopeOperation can load without pulling Llm106Model:
+    # step20_embedding -> ch3.utils -> step60_llmmodel -> step20_embedding
+    from torch.nn.parallel import DistributedDataParallel
+    from ch3.utils import lm_checkpoint, Logger, is_main_process
+
     parser = argparse.ArgumentParser(description="llm106-")
     parser.add_argument('--data_path', type=str, default=llm_data_dir+"/pretrain_t2t_mini.jsonl", help='训练数据')
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")

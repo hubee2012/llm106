@@ -12,6 +12,9 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer
 
+# Do not import Llm106Model at module level. That creates:
+# step20_embedding -> ch3.utils -> step60_llmmodel -> step20_embedding
+
 
 def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
