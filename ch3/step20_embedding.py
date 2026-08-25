@@ -91,6 +91,8 @@ class RopeOperation(nn.Module):
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
+        if self.embed_tokens.weight.device != input_ids.device:
+            self.to(input_ids.device)
         if hasattr(past_key_values, 'layers'): past_key_values = None
         past_key_values = past_key_values or [None] * len(self.layers)
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
@@ -179,13 +181,10 @@ if __name__ == "__main__":
     lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
 
-    # Weights stay on CPU until this .to(); input_ids are already moved to args.device.
-    model = RopeOperation(lm_config)
-    lm_head = nn.Linear(lm_config.hidden_size, lm_config.vocab_size, bias=False)
+    model = RopeOperation(lm_config).to(args.device)
+    lm_head = nn.Linear(lm_config.hidden_size, lm_config.vocab_size, bias=False).to(args.device)
     if lm_config.tie_word_embeddings:
         lm_head.weight = model.embed_tokens.weight
-    model = model.to(args.device)
-    lm_head = lm_head.to(args.device)
 
     device_type = "cuda" if "cuda" in args.device else "cpu"
     amp_dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
