@@ -22,6 +22,18 @@ token_path='./'
 
 TOKENIZER_SAVE_PATH = llm_data_dir+"/pretrain_t2t_mini.jsonl"
 
+
+class RopeOutput(tuple):
+    """Unpacks as (hidden_states, presents, aux_loss) and also exposes .loss / .aux_loss."""
+    def __new__(cls, hidden_states, presents, aux_loss, loss=None, logits=None):
+        obj = super().__new__(cls, (hidden_states, presents, aux_loss))
+        obj.hidden_states = hidden_states
+        obj.past_key_values = presents
+        obj.aux_loss = aux_loss
+        obj.loss = loss
+        obj.logits = logits
+        return obj
+
 class AssembleBlock(nn.Module):
     def __init__(self, layer_id: int, config: LlmConfig):
         super().__init__()
@@ -89,7 +101,8 @@ class RopeOperation(nn.Module):
         freqs_sin = torch.cat([torch.sin(freqs), torch.sin(freqs)], dim=-1) * attn_factor
         return freqs_cos, freqs_sin
 
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, labels=None, **kwargs):
+        labels = kwargs.pop('labels', labels)
         batch_size, seq_length = input_ids.shape
         if self.embed_tokens.weight.device != input_ids.device:
             self.to(input_ids.device)
@@ -117,7 +130,14 @@ class RopeOperation(nn.Module):
             presents.append(present)
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
-        return hidden_states, presents, aux_loss
+        loss = None
+        logits = None
+        if labels is not None:
+            labels = labels.to(hidden_states.device)
+            logits = F.linear(hidden_states, self.embed_tokens.weight)
+            x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
+            loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
+        return RopeOutput(hidden_states, presents, aux_loss, loss=loss, logits=logits)
 
 
 
@@ -127,7 +147,6 @@ if __name__ == "__main__":
     # Training helpers live in ch3.utils. Import them only when this file is the
     # entry point so RopeOperation can load without pulling Llm106Model:
     # step20_embedding -> ch3.utils -> step60_llmmodel -> step20_embedding
-    from types import SimpleNamespace
     from torch import optim
     from torch.nn.parallel import DistributedDataParallel
     from ch3.utils import get_lr, lm_checkpoint, Logger, is_main_process, init_distributed_mode, setup_seed
@@ -182,18 +201,12 @@ if __name__ == "__main__":
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
 
     model = RopeOperation(lm_config).to(args.device)
-    lm_head = nn.Linear(lm_config.hidden_size, lm_config.vocab_size, bias=False).to(args.device)
-    if lm_config.tie_word_embeddings:
-        lm_head.weight = model.embed_tokens.weight
 
     device_type = "cuda" if "cuda" in args.device else "cpu"
     amp_dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=amp_dtype)
     scaler = torch.cuda.amp.GradScaler(enabled=(device_type == "cuda" and args.dtype == "float16"))
-    trainable = list(model.parameters())
-    if not lm_config.tie_word_embeddings:
-        trainable += list(lm_head.parameters())
-    optimizer = optim.AdamW(trainable, lr=args.learning_rate)
+    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     wandb = None
     if args.use_wandb and is_main_process():
@@ -228,11 +241,7 @@ if __name__ == "__main__":
 
             # autocast_ctx混合精度训练（Mixed Precision Training）的上下文管理器,自动将某些计算操作从 float32 降为 float16 或 bfloat16，加速计算并减少显存占用。
             with autocast_ctx:
-                hidden_states, _, aux_loss = model(input_ids)
-                logits = lm_head(hidden_states)
-                x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
-                loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
-                res = SimpleNamespace(loss=loss, aux_loss=aux_loss)
+                res = model(input_ids, labels=labels)
                 loss = res.loss + res.aux_loss
                 loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
             # scaler 是 PyTorch 梯度缩放器（Gradient Scaler），它是混合精度训练（AMP）的配套工具，专门用来防止梯度下溢（Underflow）。
@@ -243,7 +252,7 @@ if __name__ == "__main__":
             if step % args.accumulation_steps == 0:
                 # 之前反向传播时，梯度被放大了（乘以 scale_factor）。clip_grad_norm_ 计算的是梯度的范数（Norm），如果梯度还被放大着，裁剪阈值就会失真。所以必须先反缩放回真实梯度值，再进行裁剪。
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(trainable, args.grad_clip)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
                 scaler.step(optimizer)
                 scaler.update()
@@ -275,7 +284,7 @@ if __name__ == "__main__":
 
         if last_step > start_step and last_step % args.accumulation_steps != 0:
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(trainable, args.grad_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
