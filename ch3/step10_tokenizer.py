@@ -27,7 +27,7 @@ TRAIN_DATA_PATH =llm_data_dir+ "/pretrain_t2t.jsonl"
 TOKENIZER_SAVE_PATH = llm_model_dir+"/bpe_tokenizer.json"
 import logging
 # 批量处理参数
-BATCH_SIZE = 200  # 每次处理多少行
+BATCH_SIZE = 600  # 每次处理多少行
 MAX_LINES = None  # 限制处理行数，None表示全部处理，测试时可以设置小一点
 
 
@@ -155,7 +155,7 @@ def train_bpe_tokenizer_streaming(file_path, vocab_size, special_tokens,
         show_progress=True,
         continuing_subword_prefix="##",
         end_of_word_suffix="</w>",
-        limit_alphabet=600,
+        limit_alphabet=200,
         max_token_length=16,
     )
 

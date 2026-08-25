@@ -1,6 +1,6 @@
 import math
 import time
-
+import os
 import torch
 from torch import nn
 from transformers import AutoTokenizer
@@ -53,6 +53,9 @@ class RopeOperation(nn.Module):
         freqs_cos, freqs_sin = self.rope_YaRN(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
+        self.dropout = nn.Dropout(config.dropout)
+        self.layers = nn.ModuleList([AssembleBlock(l, config) for l in range(self.num_hidden_layers)])
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
 
 
@@ -84,7 +87,7 @@ class RopeOperation(nn.Module):
         freqs_sin = torch.cat([torch.sin(freqs), torch.sin(freqs)], dim=-1) * attn_factor
         return freqs_cos, freqs_sin
 
-    def forwardforward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
         past_key_values = past_key_values or [None] * len(self.layers)
@@ -122,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
-
+    parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     args = parser.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(token_path,local_files_only=True)
@@ -140,10 +143,11 @@ if __name__ == "__main__":
         persistent_workers=True if args.num_workers > 0 else False
     )
 
-    # ========== 设置混合精度 ==========
-    device_type = "cuda" if "cuda" in args.device else "cpu"
-    dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
+    os.makedirs(args.save_dir, exist_ok=True)
+    lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
+    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    model = RopeOperation(lm_config)
+
 
     start_time = time.time()
     start_step=0
@@ -154,11 +158,10 @@ if __name__ == "__main__":
             input_ids = input_ids.to(args.device)
             labels = labels.to(args.device)
             last_step = step
-            lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
-            # for param_group in optimizer.param_groups:
-            #     param_group['lr'] = lr
 
-
+            res = model(input_ids, labels=labels)
+            loss = res.loss + res.aux_loss
+            loss = loss / args.accumulation_steps  # 除以 accumulation_steps 保证多步平均。
             # autocast_ctx混合精度训练（Mixed Precision Training）的上下文管理器,自动将某些计算操作从 float32 降为 float16 或 bfloat16，加速计算并减少显存占用。
             with autocast_ctx:
                 res = model(input_ids, labels=labels)
