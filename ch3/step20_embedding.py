@@ -128,12 +128,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="llm106-")
     parser.add_argument('--data_path', type=str, default=llm_data_dir + "/pretrain_t2t_mini.jsonl", help='训练数据')
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
-    parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
-    parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
+    # parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
+    # parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--max_seq_len', default=240, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument("--num_workers", type=int, default=6, help="数据加载线程数")
-    parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model", help="模型保存目录")
+    # parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model", help="模型保存目录")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
@@ -155,67 +155,71 @@ if __name__ == "__main__":
         persistent_workers=True if args.num_workers > 0 else False
     )
 
-    os.makedirs(args.save_dir, exist_ok=True)
+    # os.makedirs(args.save_dir, exist_ok=True)
     lm_config = LlmConfig.Llm106Config(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
                                        use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight,
-                             save_dir='../../../checkpoints') if args.from_resume == 1 else None
+    # ckp_data = lm_checkpoint(lm_config, weight=args.save_weight,
+    #                          save_dir='../../../checkpoints') if args.from_resume == 1 else None
     model = RopeOperation(lm_config)
 
-    start_time = time.time()
     start_step = 0
-    last_step = start_step
+    for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
+        hidden_state, past_kv, aux_loss = model(input_ids, labels=labels)
+        print(aux_loss)
+    # start_time = time.time()
 
-    for epoch in range(args.epochs):
-        iters = len(loader)
-        for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
-            input_ids = input_ids.to(args.device)
-            labels = labels.to(args.device)
-            last_step = step
+    # last_step = start_step
 
-            # Forward pass
-            hidden_state, present, res = model(input_ids, labels=labels)
-            loss = res.loss + res.aux_loss
-            loss = loss / args.accumulation_steps  # Normalize for gradient accumulation
-
-            # Direct backward pass (no mixed precision)
-            loss.backward()
-
-            # Gradient accumulation step
-            if step % args.accumulation_steps == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-
-            # Logging
-            if step % args.log_interval == 0 or step == iters:
-                spend_time = time.time() - start_time
-                current_loss = loss.item() * args.accumulation_steps
-                current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
-                current_logits_loss = current_loss - current_aux_loss
-                current_lr = optimizer.param_groups[-1]['lr']
-                eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
-                Logger(
-                    f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
-                if swanlab:
-                    swanlab.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss,
-                                 "learning_rate": current_lr, "epoch_time": eta_min})
-            # Save checkpoint
-            if (step % args.save_interval == 0 or step == iters) and is_main_process():
-                model.eval()
-                moe_suffix = '_moe' if lm_config.use_moe else ''
-                ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-                raw_model = model.module if isinstance(model, DistributedDataParallel) else model
-                raw_model = getattr(raw_model, '_orig_mod', raw_model)
-                state_dict = raw_model.state_dict()
-                torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-                lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, epoch=epoch,
-                              step=step, swanlab=swanlab, save_dir='../../../checkpoints')
-                model.train()
-                del state_dict
-
-        # Handle remaining gradients at the end of epoch
-        if last_step > start_step and last_step % args.accumulation_steps != 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
+    # for epoch in range(args.epochs):
+    #     iters = len(loader)
+    #     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
+    #         input_ids = input_ids.to(args.device)
+    #         labels = labels.to(args.device)
+    #         last_step = step
+    #
+    #         # Forward pass
+    #         hidden_state, past_kv, aux_loss = model(input_ids, labels=labels)
+    #         loss = res.loss + res.aux_loss
+    #         loss = loss / args.accumulation_steps  # Normalize for gradient accumulation
+    #
+    #         # Direct backward pass (no mixed precision)
+    #         loss.backward()
+    #
+    #         # Gradient accumulation step
+    #         if step % args.accumulation_steps == 0:
+    #             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+    #             optimizer.step()
+    #             optimizer.zero_grad(set_to_none=True)
+    #
+    #         # Logging
+    #         if step % args.log_interval == 0 or step == iters:
+    #             spend_time = time.time() - start_time
+    #             current_loss = loss.item() * args.accumulation_steps
+    #             current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
+    #             current_logits_loss = current_loss - current_aux_loss
+    #             current_lr = optimizer.param_groups[-1]['lr']
+    #             eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
+    #             Logger(
+    #                 f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
+    #             if swanlab:
+    #                 swanlab.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss,
+    #                              "learning_rate": current_lr, "epoch_time": eta_min})
+    #         # Save checkpoint
+    #         if (step % args.save_interval == 0 or step == iters) and is_main_process():
+    #             model.eval()
+    #             moe_suffix = '_moe' if lm_config.use_moe else ''
+    #             ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+    #             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
+    #             raw_model = getattr(raw_model, '_orig_mod', raw_model)
+    #             state_dict = raw_model.state_dict()
+    #             torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
+    #             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, epoch=epoch,
+    #                           step=step, swanlab=swanlab, save_dir='../../../checkpoints')
+    #             model.train()
+    #             del state_dict
+    #
+    #     # Handle remaining gradients at the end of epoch
+    #     if last_step > start_step and last_step % args.accumulation_steps != 0:
+    #         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+    #         optimizer.step()
+    #         optimizer.zero_grad(set_to_none=True)
