@@ -1,3 +1,13 @@
+import os
+import sys
+
+# When this file is imported as a sibling (`from step20_embedding import ...`)
+# while running `python step70_pretrain.py` from ch3/, ch3/__init__.py never
+# runs. Put the repo root on sys.path so `configs` / `utils` / `ch3` resolve.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import math
 import torch
 from torch import nn
