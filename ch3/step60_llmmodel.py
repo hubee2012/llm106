@@ -4,9 +4,9 @@ from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 
 from ch3.LlmConfig import Llm106Config
 from ch3.step20_embedding import RopeOperation
-import math, torch, torch.nn.functional as F
+import torch, torch.nn.functional as F
 
-from ch3.utils import get_model_params, Logger
+from utils import get_model_params, Logger
 
 
 def init_model(lm_config, from_weight='pretrain', tokenizer_path='./', save_dir='../out', device='cuda'):

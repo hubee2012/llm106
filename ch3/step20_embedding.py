@@ -1,10 +1,6 @@
 import math
-import time
-import os
 import torch
 from torch import nn
-from torch.nn.parallel import DistributedDataParallel
-from torch.optim import optimizer
 from transformers import AutoTokenizer
 import argparse
 from ch3 import LlmConfig
@@ -12,16 +8,9 @@ from ch3.dataset_pretrain import PretrainDataset
 from ch3.step30_attention import Attention
 from ch3.step40_norm import RMSNorm
 from ch3.step50_feedforward import FeedForward, MOEFeedForward
-from ch3.utils import lm_checkpoint, Logger, is_main_process
-from configs.llm_utils import llm_data_dir, llm_model_dir
+from configs.llm_utils import llm_data_dir
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
-from typing import Tuple, Optional, List, Union
-import torch.nn.functional as F
-from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
-from contextlib import nullcontext
-from utils import get_lr
-import swanlab
 
 token_path='./'
 

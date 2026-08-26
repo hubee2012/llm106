@@ -7,7 +7,7 @@ __package__ = "trainer"
 from ch3.LlmConfig import Llm106Config
 from ch3.dataset_pretrain import PretrainDataset
 from ch3.step60_llmmodel import init_model
-from ch3.utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
+from utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 from configs.llm_utils import llm_data_dir
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -19,7 +19,7 @@ import warnings
 import torch
 import torch.distributed as dist
 from contextlib import nullcontext
-from torch import optim, nn
+from torch import optim
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 # from model.model_minimind import MiniMindConfig
