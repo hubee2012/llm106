@@ -1,5 +1,7 @@
 import math
 
+__package__ = "ch3"  # 设置包名，用于模块导入
+
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
 
 

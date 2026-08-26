@@ -1,13 +1,22 @@
+__package__ = "ch3"  # 设置包名，用于模块导入
+import os
+import sys
+# When this file is imported as a sibling (`from step20_embedding import ...`)
+# while running `python step70_pretrain.py` from ch3/, ch3/__init__.py never
+# runs. Put the repo root on sys.path so `configs` / `utils` / `ch3` resolve.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 import math
 import torch
 from torch import nn
 from transformers import AutoTokenizer
 import argparse
-from ch3 import LlmConfig
-from ch3.dataset_pretrain import PretrainDataset
-from ch3.step30_attention import Attention
-from ch3.step40_norm import RMSNorm
-from ch3.step50_feedforward import FeedForward, MOEFeedForward
+import LlmConfig
+from dataset_pretrain import PretrainDataset
+from step30_attention import Attention
+from step40_norm import RMSNorm
+from step50_feedforward import FeedForward, MOEFeedForward
 from configs.llm_utils import llm_data_dir
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler

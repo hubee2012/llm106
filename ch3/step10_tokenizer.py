@@ -1,3 +1,5 @@
+__package__ = "ch3"  # 设置包名，用于模块导入
+
 import json
 import sys
 import os

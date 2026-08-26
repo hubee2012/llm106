@@ -1,12 +1,12 @@
+__package__ = "ch3"  # 设置包名，用于模块导入
+
 import os
 import socket
 import sys
 
-__package__ = "trainer"
-
-from ch3.LlmConfig import Llm106Config
-from ch3.dataset_pretrain import PretrainDataset
-from ch3.step60_llmmodel import init_model
+from LlmConfig import Llm106Config
+from dataset_pretrain import PretrainDataset
+from step60_llmmodel import init_model
 from utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 from configs.llm_utils import llm_data_dir
 

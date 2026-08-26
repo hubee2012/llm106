@@ -1,3 +1,5 @@
+__package__ = "ch3"  # 设置包名，用于模块导入
+
 from torch.utils.data import Dataset
 import torch
 import os

@@ -4,15 +4,11 @@ import torch
 from torch import nn
 from transformers import AutoTokenizer
 import argparse
-from ch3 import LlmConfig
-from ch3.dataset_pretrain import PretrainDataset
-from ch3.step40_norm import RMSNorm
-from configs.llm_utils import llm_data_dir, llm_model_dir
-import torch.distributed as dist
-from torch.utils.data import DataLoader, DistributedSampler
-from typing import Tuple, Optional, List, Union
+import LlmConfig
+from step40_norm import RMSNorm
 import torch.nn.functional as F
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
+__package__ = "ch3"  # 设置包名，用于模块导入
 
 def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
     def rotate_half(x): return torch.cat((-x[..., x.shape[-1] // 2:], x[..., : x.shape[-1] // 2]), dim=-1)

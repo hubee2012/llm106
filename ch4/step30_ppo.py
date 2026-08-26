@@ -547,6 +547,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
     parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
     parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
+    parser.add_argument("--model_path", type=str, default="../../../llm_data/llm106_model", help="RLAIF数据路径")
 
     # PPO超参数
     parser.add_argument("--clip_epsilon", type=float, default=0.2, help="PPO裁剪参数")
@@ -625,12 +626,12 @@ if __name__ == "__main__":
     # 第6步：初始化模型和数据
     # ========================================================================
     base_weight = args.from_weight
-
+    model_path=args.model_path
     # 6.1 Actor模型（策略网络）
-    actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device)
+    actor_model, tokenizer = init_model(lm_config, base_weight,tokenizer_path='../ch3',save_dir=model_path, device=args.device)
 
     # 6.2 参考模型（用于KL散度约束，冻结参数）
-    ref_model, _ = init_model(lm_config, base_weight, device=args.device)
+    ref_model, _ = init_model(lm_config, base_weight,tokenizer_path='../ch3', save_dir=model_path,device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
 
     # 6.3 Critic模型（价值网络）

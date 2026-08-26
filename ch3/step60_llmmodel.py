@@ -2,11 +2,12 @@ from torch import nn
 from transformers import PreTrainedModel, GenerationMixin, AutoTokenizer
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 
-from ch3.LlmConfig import Llm106Config
-from ch3.step20_embedding import RopeOperation
+from LlmConfig import Llm106Config
+from step20_embedding import RopeOperation
 import torch, torch.nn.functional as F
 
 from utils import get_model_params, Logger
+__package__ = "ch3"  # 设置包名，用于模块导入
 
 
 def init_model(lm_config, from_weight='pretrain', tokenizer_path='./', save_dir='../out', device='cuda'):
