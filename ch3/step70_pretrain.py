@@ -5,8 +5,9 @@ __package__ = "trainer"
 
 from ch3.LlmConfig import Llm106Config
 from ch3.dataset_pretrain import PretrainDataset
-from ch3.utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, \
-    SkipBatchSampler
+from ch3.step60_llmmodel import init_model
+from ch3.utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
+from configs.llm_utils import llm_data_dir
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -98,7 +99,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model", help="模型保存目录")
     parser.add_argument('--save_weight', default='pretrain', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=32, help="batch size")
+    parser.add_argument("--batch_size", type=int, default=8, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")

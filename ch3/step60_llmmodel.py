@@ -9,7 +9,7 @@ import math, torch, torch.nn.functional as F
 from ch3.utils import get_model_params, Logger
 
 
-def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
+def init_model(lm_config, from_weight='pretrain', tokenizer_path='./', save_dir='../out', device='cuda'):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = Llm106Model(lm_config)
 
