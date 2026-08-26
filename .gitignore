@@ -1,3 +1,7 @@
 /.idea/
 *.pyc
 __pycache__/
+swanlog/
+**/swanlog/
+checkpoints/
+**/checkpoints/
