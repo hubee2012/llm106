@@ -2,15 +2,16 @@ import os
 import socket
 import sys
 
-__package__ = "trainer"
+# `python step70_pretrain.py` (from ch3/ or as ch3/step70_pretrain.py) puts this
+# file's directory on sys.path, not the repo root. Insert the repo root first so
+# `ch3`, `utils`, and `configs` are importable as packages.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from ch3.LlmConfig import Llm106Config
 from ch3.dataset_pretrain import PretrainDataset
 from ch3.step60_llmmodel import init_model
 from utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 from configs.llm_utils import llm_data_dir
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import argparse
