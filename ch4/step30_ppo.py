@@ -12,8 +12,7 @@ from ch4.rollout_engine import create_rollout_engine  # 生成引擎（用于采
 from trainer.trainer_utils import LMForRewardModel  # 奖励模型包装类
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 
-# 添加项目根目录到Python路径（解决导入问题）
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 # 标准库和第三方库
 import datasets  # noqa: F401  # Windows下pyarrow/torch DLL冲突的临时解决方案

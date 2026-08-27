@@ -1,17 +1,27 @@
-# ============================================================================
-# 导入必要的库
-# ============================================================================
 import os
 import sys
+from pathlib import Path
 
-__package__ = "trainer"  # 设置包名，用于模块导入
 
-# 导入自定义模块
-from ch2.dataset_sft import SFTDataset  # SFT数据集处理类
+# 获取项目根目录 (llm106/)
+project_root = Path(__file__).resolve().parent.parent
 
-# 添加项目根目录到Python路径（解决导入问题）
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 将所有需要的子目录添加到 sys.path
+paths_to_add = [
+    project_root / 'configs',
+    project_root / 'ch2',
+    project_root / 'ch3',
+]
 
+for path in paths_to_add:
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)  # 全部插到最前面
+
+# 现在可以直接导入
+from llm_utils import llm_data_dir          # 来自 configs/
+
+from dataset_sft import SFTDataset        # 来自 ch2/
 # 标准库和第三方库
 import datasets  # noqa: F401  # Windows下pyarrow/torch DLL冲突的临时解决方案
 import argparse
@@ -24,8 +34,9 @@ from torch import optim, nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
-from ch3.step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
-from ch3.LlmConfig import Llm106Config  # 模型配置类
+from step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
+from LlmConfig import Llm106Config  # 模型配置类
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 warnings.filterwarnings('ignore')  # 忽略警告信息
 
@@ -207,10 +218,10 @@ if __name__ == "__main__":
     # ========================================================================
     # 第1步：解析命令行参数
     # ========================================================================
-    parser = argparse.ArgumentParser(description="MiniMind Full SFT")
+    parser = argparse.ArgumentParser(description="llm106 Full SFT")
 
     # 训练配置参数
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model/sft", help="模型保存目录")
     parser.add_argument('--save_weight', default='full_sft', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=16, help="batch size")
@@ -219,7 +230,7 @@ if __name__ == "__main__":
     # 设备和精度配置
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型（bfloat16或float16）")
-    parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
+    parser.add_argument("--num_workers", type=int, default=4, help="数据加载线程数")
 
     # 优化相关配置
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
@@ -236,9 +247,10 @@ if __name__ == "__main__":
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
 
     # 数据和模型路径
-    parser.add_argument("--data_path", type=str, default="../dataset/sft_t2t_mini.jsonl", help="训练数据路径")
-    parser.add_argument('--from_weight', default='pretrain', type=str,
-                        help="基于哪个权重训练，为none则不基于任何权重训练")
+    parser.add_argument("--data_path", type=str, default=llm_data_dir +"/sft_t2t_mini.jsonl", help="训练数据路径")
+    parser.add_argument("--tokenizer_path", type=str, default= "../ch3", help="训练数据路径")
+    parser.add_argument('--from_weight', default='../../../llm_data/llm106_model/pretrain_768_9900k.pth', type=str,
+                        help="预训练模型文件位置，基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1],
                         help="是否自动检测&续训（0=否，1=是）")
 
@@ -296,7 +308,7 @@ if __name__ == "__main__":
         # 如果有检查点，获取之前的wandb_id以便续训
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         resume = 'must' if wandb_id else None  # 如果存在ID则必须续训
-        wandb_run_name = f"MiniMind-Full-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
+        wandb_run_name = f"llm106-SFT-Epoch-{args.epochs}-bsize-{args.batch_size}-lr-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
 
     # ========================================================================
@@ -304,7 +316,7 @@ if __name__ == "__main__":
     # ========================================================================
     # 6.1 初始化模型
     # from_weight: 'pretrain'表示从预训练权重开始，'none'表示随机初始化
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config,args.from_weight,tokenizer_path=args.tokenizer_path,  device=args.device)
 
     # 6.2 加载数据集
     # SFTDataset将原始文本转换为(input_ids, labels)对
