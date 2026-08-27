@@ -1,14 +1,23 @@
+import os
+import sys
+
+# `python step10_sft.py` from ch4/ may import this as a sibling (`dataset_sft`)
+# or as `ch2.dataset_sft`. Put the repo root on sys.path so `ch2.dataset_utils`
+# resolves in both cases.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from torch.utils.data import Dataset
 import torch
-import os
 import json
-import random
-from datasets import load_dataset
-from datasets import load_dataset, Features, Sequence, Value
+from datasets import load_dataset, Features, Value
 
 from ch2.dataset_utils import pre_processing_chat, post_processing_chat
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 class SFTDataset(Dataset):
     def __init__(self, jsonl_path, tokenizer, max_length=1024):
         super().__init__()

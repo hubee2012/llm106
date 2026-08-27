@@ -4,13 +4,17 @@
 import os
 import sys
 
-__package__ = "trainer"  # 设置包名，用于模块导入
+# `python step10_sft.py` (from ch4/ or as ch4/step10_sft.py) puts this file's
+# directory on sys.path, not the repo root. Insert the repo root (and ch2)
+# first so `dataset_sft` / `ch2` / `ch3` / `utils` are importable.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_CH2 = os.path.join(_REPO_ROOT, 'ch2')
+for _path in (_REPO_ROOT, _CH2):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 # 导入自定义模块
-from ch2.dataset_sft import SFTDataset  # SFT数据集处理类
-
-# 添加项目根目录到Python路径（解决导入问题）
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from dataset_sft import *  # SFT数据集处理类
 
 # 标准库和第三方库
 import datasets  # noqa: F401  # Windows下pyarrow/torch DLL冲突的临时解决方案
