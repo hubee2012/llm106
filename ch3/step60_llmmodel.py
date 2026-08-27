@@ -1,3 +1,12 @@
+import os
+import sys
+
+# 从 ch3/ 作为脚本或兄弟模块导入时，ch3/__init__.py 不会执行。
+# 先把仓库根目录放进 sys.path，才能 `from utils import ...`。
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from torch import nn
 from transformers import PreTrainedModel, GenerationMixin, AutoTokenizer
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast

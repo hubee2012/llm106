@@ -1,7 +1,16 @@
+<<<<<<< HEAD
+=======
+# ============================================================================
+# 导入必要的库
+# ============================================================================
+__package__ = "ch4"  # 设置包名，用于模块导入
+
+>>>>>>> e8bb317c3c04f05ac0938ffe6ed0dba45692c3cf
 import os
 import sys
 from pathlib import Path
 
+<<<<<<< HEAD
 
 # 获取项目根目录 (llm106/)
 project_root = Path(__file__).resolve().parent.parent
@@ -12,6 +21,20 @@ paths_to_add = [
     project_root / 'ch2',
     project_root / 'ch3',
 ]
+=======
+# `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
+# 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
+# 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
+current_dir = Path(__file__).resolve().parent  # ch4/
+parent_dir = current_dir.parent  # llm106/
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs"):
+    extra = str(extra)
+    if extra not in sys.path:
+        sys.path.insert(0, extra)
+
+from llm_utils import *  # noqa: F401,F403
+from dataset_sft import *  # SFT数据集处理类
+>>>>>>> e8bb317c3c04f05ac0938ffe6ed0dba45692c3cf
 
 for path in paths_to_add:
     path_str = str(path)

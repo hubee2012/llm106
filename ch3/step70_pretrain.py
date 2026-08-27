@@ -4,13 +4,17 @@ import os
 import socket
 import sys
 
+# `python step70_pretrain.py` 时 sys.path 是 ch3/，不是仓库根目录。
+# 必须先插入 llm106/，否则 `utils` / `configs` 找不到。
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from LlmConfig import Llm106Config
 from dataset_pretrain import PretrainDataset
 from step60_llmmodel import init_model
 from utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 from configs.llm_utils import llm_data_dir
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import argparse
