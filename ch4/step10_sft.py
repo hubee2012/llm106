@@ -269,7 +269,7 @@ if __name__ == "__main__":
 
     # 实验跟踪
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="Full-SFT", help="wandb项目名")
+    parser.add_argument("--wandb_project", type=str, default="llm106_sft", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1],
                         help="是否使用torch.compile加速（0=否，1=是）")
     args = parser.parse_args()
