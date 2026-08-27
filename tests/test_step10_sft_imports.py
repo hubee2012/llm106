@@ -37,14 +37,16 @@ def _bootstrap_source(source: str) -> str:
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module:
             top = node.module.split(".", 1)[0]
-            if top in PROJECT_PACKAGES or top == "dataset_sft":
+            if top in PROJECT_PACKAGES or top in {"dataset_sft", "llm_utils"}:
                 break
         if isinstance(node, ast.Import):
             names = {alias.name.split(".", 1)[0] for alias in node.names}
-            if names <= {"os", "sys"}:
+            if names <= {"os", "sys", "pathlib"}:
                 keep.append(node)
             continue
         if isinstance(node, ast.ImportFrom):
+            if node.module == "pathlib":
+                keep.append(node)
             continue
         keep.append(node)
     module = ast.Module(body=keep, type_ignores=[])
@@ -62,7 +64,7 @@ def _assert_path_setup_before_project_imports(path: Path) -> None:
             path_setup_line = node.lineno
         if project_import_line is None and isinstance(node, ast.ImportFrom) and node.module:
             top = node.module.split(".", 1)[0]
-            if top in PROJECT_PACKAGES or top == "dataset_sft":
+            if top in PROJECT_PACKAGES or top in {"dataset_sft", "llm_utils"}:
                 project_import_line = node.lineno
     assert path_setup_line is not None, f"{path.name} must add the repo root to sys.path"
     assert project_import_line is not None, f"{path.name} expected a project import"
@@ -107,7 +109,7 @@ def test_step10_bootstrap_finds_dataset_sft_from_ch4_dir():
     """Reproduce: cd ch4 && python step10_sft.py -> from dataset_sft import *."""
     _assert_bootstrap_discovers_packages(
         STEP10,
-        ("dataset_sft", "ch2.dataset_sft", "ch3", "utils"),
+        ("dataset_sft", "ch2.dataset_sft", "ch3", "utils", "llm_utils"),
         cwd=CH4,
     )
 

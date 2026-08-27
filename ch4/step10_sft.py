@@ -1,19 +1,23 @@
 # ============================================================================
 # 导入必要的库
 # ============================================================================
+__package__ = "ch4"  # 设置包名，用于模块导入
+
 import os
 import sys
+from pathlib import Path
 
-# `python step10_sft.py` (from ch4/ or as ch4/step10_sft.py) puts this file's
-# directory on sys.path, not the repo root. Insert the repo root (and ch2)
-# first so `dataset_sft` / `ch2` / `ch3` / `utils` are importable.
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_CH2 = os.path.join(_REPO_ROOT, 'ch2')
-for _path in (_REPO_ROOT, _CH2):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+# `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
+# 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
+# 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
+current_dir = Path(__file__).resolve().parent  # ch4/
+parent_dir = current_dir.parent  # llm106/
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs"):
+    extra = str(extra)
+    if extra not in sys.path:
+        sys.path.insert(0, extra)
 
-# 导入自定义模块
+from llm_utils import *  # noqa: F401,F403
 from dataset_sft import *  # SFT数据集处理类
 
 # 标准库和第三方库
