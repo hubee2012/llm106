@@ -1,16 +1,8 @@
-<<<<<<< HEAD
-=======
-# ============================================================================
-# 导入必要的库
-# ============================================================================
-__package__ = "ch4"  # 设置包名，用于模块导入
 
->>>>>>> e8bb317c3c04f05ac0938ffe6ed0dba45692c3cf
 import os
 import sys
 from pathlib import Path
 
-<<<<<<< HEAD
 
 # 获取项目根目录 (llm106/)
 project_root = Path(__file__).resolve().parent.parent
@@ -21,7 +13,6 @@ paths_to_add = [
     project_root / 'ch2',
     project_root / 'ch3',
 ]
-=======
 # `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
 # 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
 # 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
@@ -33,8 +24,7 @@ for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs"):
         sys.path.insert(0, extra)
 
 from llm_utils import *  # noqa: F401,F403
-from dataset_sft import *  # SFT数据集处理类
->>>>>>> e8bb317c3c04f05ac0938ffe6ed0dba45692c3cf
+from dataset_sft import *  # SFT数据集处理类``
 
 for path in paths_to_add:
     path_str = str(path)
@@ -247,7 +237,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model/sft", help="模型保存目录")
     parser.add_argument('--save_weight', default='full_sft', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=16, help="batch size")
+    parser.add_argument("--batch_size", type=int, default=2, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="初始学习率")
 
     # 设备和精度配置
@@ -260,8 +250,8 @@ if __name__ == "__main__":
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
 
     # 日志和保存配置
-    parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
-    parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
+    parser.add_argument("--log_interval", type=int, default=20, help="日志打印间隔")
+    parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔")
 
     # 模型架构参数
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
