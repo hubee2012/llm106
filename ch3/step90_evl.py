@@ -13,11 +13,10 @@
 #   --trust_remote_code \
 #   --apply_chat_template
 
-
-
 import os
 import sys
 from pathlib import Path
+
 # 获取项目根目录 (llm106/)
 project_root = Path(__file__).resolve().parent.parent
 
@@ -96,11 +95,57 @@ BENCHMARK_SCORES = {
 from lm_eval import simple_evaluate
 
 
-def run_evaluation(tasks, batch_size=4, device="cpu", limit=None):
-    """运行评测并返回结果"""
-    results = {}
+def load_cached_results(cache_file="evaluation_cache.json"):
+    """加载缓存的评测结果"""
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
+
+def save_cached_results(results, cache_file="evaluation_cache.json"):
+    """保存评测结果到缓存"""
+    with open(cache_file, 'w') as f:
+        json.dump(results, f, indent=2)
+
+
+def run_evaluation(tasks, batch_size=4, device="cpu", limit=None, cache_file="evaluation_cache.json", force_rerun=[]):
+    """运行评测并返回结果，支持缓存
+
+    Args:
+        tasks: 要评测的任务列表
+        batch_size: 批次大小
+        device: 设备 (cpu/cuda)
+        limit: 每个任务的样本限制
+        cache_file: 缓存文件路径
+        force_rerun: 强制重新计算的任务列表
+    """
+    results = load_cached_results(cache_file)
+    completed_tasks = set(results.keys())
+
+    # 过滤出需要计算的任务
+    tasks_to_run = []
     for task in tasks:
+        if task in force_rerun:
+            tasks_to_run.append(task)
+            print(f"⏳ Force re-running {task} (cached score will be overwritten)")
+        elif task in completed_tasks and results.get(task) is not None:
+            print(f"⏭️  Using cached result for {task}: {results[task]:.4f}")
+        else:
+            tasks_to_run.append(task)
+
+    if not tasks_to_run:
+        print("✅ All tasks have cached results!")
+        return results
+
+    print(f"\n📊 Running evaluation for {len(tasks_to_run)} tasks: {tasks_to_run}")
+
+    # 运行需要评测的任务
+    new_results = {}
+    for task in tasks_to_run:
         print(f"\n{'=' * 50}")
         print(f"Running evaluation on: {task}")
         print(f"{'=' * 50}")
@@ -125,18 +170,27 @@ def run_evaluation(tasks, batch_size=4, device="cpu", limit=None):
                     acc = result["results"][task].get("accuracy", None)
 
                 if acc is not None:
-                    results[task] = float(acc)
+                    new_results[task] = float(acc)
                     print(f"✓ {task}: {acc:.4f}")
                 else:
                     print(f"⚠ Could not extract accuracy for {task}")
-                    # 打印所有可用的指标
                     print(f"Available metrics: {list(result['results'][task].keys())}")
+                    new_results[task] = None
             else:
                 print(f"⚠ No results for {task}")
+                new_results[task] = None
 
         except Exception as e:
             print(f"✗ Error on {task}: {e}")
-            results[task] = None
+            new_results[task] = None
+
+    # 合并结果（保留旧结果，新结果覆盖）
+    for task, score in new_results.items():
+        results[task] = score
+
+    # 保存缓存
+    save_cached_results(results, cache_file)
+    print(f"\n💾 Results cached to: {cache_file}")
 
     return results
 
@@ -254,48 +308,100 @@ def plot_bar_comparison(model_scores, benchmark_scores, output_path="evaluation_
     print(f"✓ Bar chart saved to: {output_path}")
 
 
-# ====== 主执行流程 ======
-if __name__ == "__main__":
-
-    # 1. 评测模型
-    print("\n" + "=" * 60)
-    print("Starting Model Evaluation...")
-    print("=" * 60)
-
-    # 可以设置 limit 来加快测试（正式评测时去掉 limit）
-    model_scores = run_evaluation(
-        tasks=TASKS,
-        batch_size=4,
-        device="cpu",
-        limit=None  # 设为 None 使用完整数据集
-    )
-
-    # 2. 打印结果汇总
+def print_evaluation_summary(model_scores, results_file="evaluation_results.json"):
+    """打印并保存评测结果汇总"""
     print("\n" + "=" * 60)
     print("Evaluation Results Summary:")
     print("=" * 60)
-    print(f"{'Task':<20} {'Accuracy':<12}")
-    print("-" * 40)
+    print(f"{'Task':<20} {'Accuracy':<12} {'Status':<10}")
+    print("-" * 45)
+
+    successful = 0
+    failed = 0
+
     for task, score in model_scores.items():
         if score is not None:
-            print(f"{task:<20} {score:.4f}")
+            print(f"{task:<20} {score:.4f}     ✓")
+            successful += 1
         else:
-            print(f"{task:<20} {'Failed':<12}")
+            print(f"{task:<20} {'N/A':<12}     ✗")
+            failed += 1
 
-    # 3. 保存结果到文件
-    with open("evaluation_results.json", "w") as f:
+    print("-" * 45)
+    print(f"Total: {len(model_scores)} tasks, {successful} successful, {failed} failed")
+
+    # 保存结果到文件
+    with open(results_file, "w") as f:
         json.dump(model_scores, f, indent=2)
-    print(f"\n✓ Results saved to: evaluation_results.json")
+    print(f"\n✓ Results saved to: {results_file}")
 
-    # 4. 绘制雷达图
+    return successful, failed
+
+
+# ====== 主执行流程 ======
+if __name__ == "__main__":
+
+    print("\n" + "=" * 60)
+    print("Starting Model Evaluation with Cache...")
+    print("=" * 60)
+    print(f"Tasks to evaluate: {len(TASKS)} tasks")
+    print(f"Tasks: {TASKS}")
+    print("=" * 60)
+
+    # ===== 配置选项 =====
+    # 强制重新计算的任务列表（如果某些任务失败或需要更新）
+    FORCE_RERUN = []  # 例如: ["mmlu", "ceval-valid"]
+
+    # 是否只使用缓存的分数（不进行任何新计算）
+    USE_CACHE_ONLY = False  # 设为 True 则只加载缓存，不运行任何评测
+
+    # 缓存文件路径
+    CACHE_FILE = "evaluation_cache.json"
+
+    # 可选：限制每个任务的样本数（用于快速测试）
+    LIMIT = None  # 设为数字如 100 来快速测试，None 表示使用完整数据集
+
+    if USE_CACHE_ONLY:
+        print("\n📂 Loading cached results only...")
+        model_scores = load_cached_results(CACHE_FILE)
+        if not model_scores:
+            print("⚠ No cached results found!")
+            sys.exit(1)
+        print(f"✅ Loaded {len(model_scores)} cached results")
+    else:
+        # 1. 评测模型（支持缓存）
+        model_scores = run_evaluation(
+            tasks=TASKS,
+            batch_size=4,
+            device="cpu",
+            limit=LIMIT,
+            cache_file=CACHE_FILE,
+            force_rerun=FORCE_RERUN
+        )
+
+    # 2. 打印结果汇总
+    print_evaluation_summary(model_scores, "evaluation_results.json")
+
+    # 3. 绘制雷达图（跳过失败的任务）
     print("\n" + "=" * 60)
     print("Generating Radar Chart...")
     print("=" * 60)
 
-    # 使用基准分数
-    plot_radar_chart(model_scores, BENCHMARK_SCORES, "evaluation_radar.png")
+    # 只使用成功计算的任务
+    valid_scores = {k: v for k, v in model_scores.items() if v is not None}
+    if len(valid_scores) >= 3:
+        plot_radar_chart(valid_scores, BENCHMARK_SCORES, "evaluation_radar.png")
+    else:
+        print(f"⚠ Not enough valid scores ({len(valid_scores)}) to generate radar chart (need at least 3)")
 
-    # 5. 绘制条形图（补充）
-    plot_bar_comparison(model_scores, BENCHMARK_SCORES, "evaluation_bar.png")
+    # 4. 绘制条形图（补充）
+    if len(valid_scores) >= 1:
+        plot_bar_comparison(valid_scores, BENCHMARK_SCORES, "evaluation_bar.png")
+    else:
+        print("⚠ No valid scores to generate bar chart")
 
-
+    print("\n" + "=" * 60)
+    print("✅ Evaluation complete!")
+    print(f"Cache file: {CACHE_FILE}")
+    print(f"Results file: evaluation_results.json")
+    print("=" * 60)

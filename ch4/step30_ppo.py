@@ -1,6 +1,12 @@
 
 import os
 import sys
+from pathlib import Path
+
+from configs.llm_utils import llm_data_dir
+
+# 获取项目根目录 (llm106/)
+project_root = Path(__file__).resolve().parent.parent
 
 # 将所有需要的子目录添加到 sys.path
 paths_to_add = [
@@ -13,7 +19,7 @@ paths_to_add = [
 # 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
 current_dir = Path(__file__).resolve().parent  # ch4/
 parent_dir = current_dir.parent  # llm106/
-for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
+for extra in (project_root,parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
     extra = str(extra)
     if extra not in sys.path:
         sys.path.insert(0, extra)
@@ -560,8 +566,8 @@ if __name__ == "__main__":
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
     parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
-    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
-    parser.add_argument("--model_path", type=str, default="../../../llm_data/llm106_model", help="RLAIF数据路径")
+    parser.add_argument("--data_path", type=str, default=llm_data_dir +"/rlaif.jsonl", help="RLAIF数据路径")
+
 
     # PPO超参数
     parser.add_argument("--clip_epsilon", type=float, default=0.2, help="PPO裁剪参数")
@@ -575,7 +581,9 @@ if __name__ == "__main__":
     parser.add_argument("--mini_batch_size", type=int, default=2, help="PPO每次更新的minibatch大小")
 
     # 模型路径
-    parser.add_argument('--from_weight', default='full_sft', type=str, help="基于哪个权重训练")
+    parser.add_argument('--from_weight', default='../../../llm_data/llm106_model/pretrain_768_9900k.pth', type=str,
+                        help="预训练模型文件位置，基于哪个权重训练，为none则不基于任何权重训练")
+    parser.add_argument("--sft_model_path", type=str, default="../../../llm_data/llm106_model/sft/", help="sft模型文件位置")
     parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
 
@@ -640,17 +648,18 @@ if __name__ == "__main__":
     # 第6步：初始化模型和数据
     # ========================================================================
     base_weight = args.from_weight
-    model_path=args.model_path
+    sft_model_path=args.sft_model_path
     # 6.1 Actor模型（策略网络）
-    actor_model, tokenizer = init_model(lm_config, base_weight,tokenizer_path='../ch3',save_dir=model_path, device=args.device)
+    actor_model, tokenizer = init_model(lm_config, base_weight,tokenizer_path='../ch3',save_dir=sft_model_path, device=args.device)
 
     # 6.2 参考模型（用于KL散度约束，冻结参数）
-    ref_model, _ = init_model(lm_config, base_weight,tokenizer_path='../ch3', save_dir=model_path,device=args.device)
+    ref_model, _ = init_model(lm_config, base_weight,tokenizer_path='../ch3', save_dir=sft_model_path,device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
 
     # 6.3 Critic模型（价值网络）
-    moe_suffix = '_moe' if lm_config.use_moe else ''
-    ckp = f'{args.save_dir}/{base_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+    # moe_suffix = '_moe' if lm_config.use_moe else ''
+    # ckp = f'{args.save_dir}/{base_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+    ckp = f'{base_weight}'
     state_dict = torch.load(ckp, map_location=args.device)
     critic_model = CriticModel(lm_config)
     critic_model.load_state_dict(state_dict, strict=False)  # 加载权重（strict=False忽略不匹配的层）
