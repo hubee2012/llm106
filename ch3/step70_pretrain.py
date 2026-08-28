@@ -4,11 +4,31 @@ import os
 import socket
 import sys
 
-# `python step70_pretrain.py` 时 sys.path 是 ch3/，不是仓库根目录。
-# 必须先插入 llm106/，否则 `utils` / `configs` 找不到。
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+
+import os
+import sys
+from pathlib import Path
+
+
+# 获取项目根目录 (llm106/)
+project_root = Path(__file__).resolve().parent.parent
+
+# 将所有需要的子目录添加到 sys.path
+paths_to_add = [
+    project_root / 'configs',
+    project_root / 'ch2',
+    project_root / 'ch3',
+]
+# `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
+# 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
+# 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
+current_dir = Path(__file__).resolve().parent  # ch4/
+parent_dir = current_dir.parent  # llm106/
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
+    extra = str(extra)
+    if extra not in sys.path:
+        sys.path.insert(0, extra)
+
 
 from LlmConfig import Llm106Config
 from dataset_pretrain import PretrainDataset
@@ -191,6 +211,7 @@ if __name__ == "__main__":
             train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
         else:
             train_epoch(epoch, loader, len(loader), 0, wandb)
+
 
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():

@@ -8,5 +8,6 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="minimind" />
     <orderEntry type="module" module-name="llmmind" />
+    <orderEntry type="module" module-name="lm_eval" />
   </component>
 </module>

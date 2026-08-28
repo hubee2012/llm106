@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/llm106.iml" filepath="$PROJECT_DIR$/.idea/llm106.iml" />
       <module fileurl="file://$PROJECT_DIR$/../llmmind/.idea/llmmind.iml" filepath="$PROJECT_DIR$/../llmmind/.idea/llmmind.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/lm_eval.iml" filepath="$PROJECT_DIR$/.idea/lm_eval.iml" />
       <module fileurl="file://$USER_HOME$/git_test/minimind/.idea/minimind.iml" filepath="$USER_HOME$/git_test/minimind/.idea/minimind.iml" />
     </modules>
   </component>

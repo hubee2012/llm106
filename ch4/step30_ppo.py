@@ -2,13 +2,28 @@
 import os
 import sys
 
-__package__ = "trainer"  # 设置包名，用于模块导入
+# 将所有需要的子目录添加到 sys.path
+paths_to_add = [
+    project_root / 'configs',
+    project_root / 'ch2',
+    project_root / 'ch3',
+]
+# `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
+# 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
+# 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
+current_dir = Path(__file__).resolve().parent  # ch4/
+parent_dir = current_dir.parent  # llm106/
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
+    extra = str(extra)
+    if extra not in sys.path:
+        sys.path.insert(0, extra)
+
 
 # 导入自定义模块
-from ch2.dataset_rlhf import RLHFDataset  # RLHF数据集处理
-from ch3.LlmConfig import Llm106Config  # 模型配置类
-from ch3.step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
-from ch4.rollout_engine import create_rollout_engine  # 生成引擎（用于采样）
+from dataset_rlhf import RLHFDataset  # RLHF数据集处理
+from LlmConfig import Llm106Config  # 模型配置类
+from step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
+from rollout_engine import create_rollout_engine  # 生成引擎（用于采样）
 from trainer.trainer_utils import LMForRewardModel  # 奖励模型包装类
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 
@@ -733,3 +748,11 @@ if __name__ == "__main__":
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()
+
+
+
+
+
+
+
+

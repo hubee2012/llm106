@@ -6,3 +6,8 @@ datasets
 peft
 dashscope
 wandb
+matplotlib
+numpy
+tokenizers
+datasets
+swanlab

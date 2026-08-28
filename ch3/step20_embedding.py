@@ -1,12 +1,37 @@
 __package__ = "ch3"  # 设置包名，用于模块导入
 import os
 import sys
-# When this file is imported as a sibling (`from step20_embedding import ...`)
-# while running `python step70_pretrain.py` from ch3/, ch3/__init__.py never
-# runs. Put the repo root on sys.path so `configs` / `utils` / `ch3` resolve.
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+# # When this file is imported as a sibling (`from step20_embedding import ...`)
+# # while running `python step70_pretrain.py` from ch3/, ch3/__init__.py never
+# # runs. Put the repo root on sys.path so `configs` / `utils` / `ch3` resolve.
+# _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# if _REPO_ROOT not in sys.path:
+#     sys.path.insert(0, _REPO_ROOT)
+
+import os
+import sys
+from pathlib import Path
+
+
+# 获取项目根目录 (llm106/)
+project_root = Path(__file__).resolve().parent.parent
+
+# 将所有需要的子目录添加到 sys.path
+paths_to_add = [
+    project_root / 'configs',
+    project_root / 'ch2',
+    project_root / 'ch3',
+]
+# `python step10_sft.py` 时 sys.path 只有 ch4/。必须把仓库根目录 llm106/
+# 加进去，因为 dataset_sft 内部是 `from ch2.dataset_utils import ...`。
+# 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
+current_dir = Path(__file__).resolve().parent  # ch4/
+parent_dir = current_dir.parent  # llm106/
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
+    extra = str(extra)
+    if extra not in sys.path:
+        sys.path.insert(0, extra)
+
 import math
 import torch
 from torch import nn
@@ -17,7 +42,7 @@ from dataset_pretrain import PretrainDataset
 from step30_attention import Attention
 from step40_norm import RMSNorm
 from step50_feedforward import FeedForward, MOEFeedForward
-from configs.llm_utils import llm_data_dir
+from llm_utils import llm_data_dir
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -51,6 +76,7 @@ class RopeOperation(nn.Module):
                 config: LlmConfig.Llm106Config
                 ):
         super().__init__()
+        self.config=config
         self.vocab_size=config.vocab_size
         self.embedding_dim=config.hidden_size
         self.embed_tokens=nn.Embedding(self.vocab_size,self.embedding_dim)

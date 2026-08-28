@@ -18,7 +18,7 @@ paths_to_add = [
 # 只 insert configs/ 或 ch2/、以及 `__package__ = "ch4"`，都不够。
 current_dir = Path(__file__).resolve().parent  # ch4/
 parent_dir = current_dir.parent  # llm106/
-for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs"):
+for extra in (parent_dir, parent_dir / "ch2", parent_dir / "configs", parent_dir / "ch3"):
     extra = str(extra)
     if extra not in sys.path:
         sys.path.insert(0, extra)
