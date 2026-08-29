@@ -30,7 +30,7 @@ from dataset_rlhf import RLHFDataset  # RLHF数据集处理
 from LlmConfig import Llm106Config  # 模型配置类
 from step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
 from rollout_engine import create_rollout_engine  # 生成引擎（用于采样）
-from trainer.trainer_utils import LMForRewardModel  # 奖励模型包装类
+from LMForRewardModel import LMForRewardModel  # 奖励模型包装类
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 
 
