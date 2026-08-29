@@ -61,7 +61,10 @@ def test_normalize_aliases_rope_type_and_fills_factor():
     assert _internlm2_init_rope(config) == ("dynamic", 1.0)
 
 
-def test_raw_transformers_default_dict_matches_reported_keyerror():
+def test_raw_transformers_default_dict_keyerrors_without_normalize():
+    # Transformers 4.46+ injects {"rope_type": "default"} which has neither
+    # InternLM2 key. After BC copies rope_type -> type, the crash is KeyError: factor,
+    # which matches the internlm2-1_8b-reward traceback.
     config = SimpleNamespace(rope_scaling={"rope_type": "default"})
     try:
         _internlm2_init_rope(config)
@@ -69,7 +72,18 @@ def test_raw_transformers_default_dict_matches_reported_keyerror():
     except KeyError as exc:
         raised = exc
     assert raised is not None
+    assert raised.args[0] in {"type", "factor"}
+
+    config = SimpleNamespace(rope_scaling={"type": "default", "rope_type": "default"})
+    try:
+        _internlm2_init_rope(config)
+        raised = None
+    except KeyError as exc:
+        raised = exc
+    assert raised is not None
     assert raised.args[0] == "factor"
+    normalize_internlm2_rope_scaling(config)
+    assert _internlm2_init_rope(config) == "default"
 
 
 def test_normalize_property_alias_to_rope_parameters():
