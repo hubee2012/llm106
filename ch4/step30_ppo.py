@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from configs.llm_utils import llm_data_dir
+
 
 # 获取项目根目录 (llm106/)
 project_root = Path(__file__).resolve().parent.parent
@@ -30,11 +30,12 @@ from dataset_rlhf import RLHFDataset  # RLHF数据集处理
 from LlmConfig import Llm106Config  # 模型配置类
 from step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
 from rollout_engine import create_rollout_engine  # 生成引擎（用于采样）
-from trainer.trainer_utils import LMForRewardModel  # 奖励模型包装类
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
+from LMForRewardModel import LMForRewardModel
+from llm_utils import llm_data_dir
 
-
-
+from OpenAssistantRewardModel import *
+from SimpleRuleReward import SimpleRuleReward
 # 标准库和第三方库
 import datasets  # noqa: F401  # Windows下pyarrow/torch DLL冲突的临时解决方案
 import argparse
@@ -52,6 +53,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 warnings.filterwarnings('ignore')  # 忽略警告信息
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 
 # ============================================================================
@@ -69,12 +71,26 @@ def rep_penalty(text, n=3, cap=0.5):
     返回:
         重复惩罚分数，范围[0, cap]
     """
-    # 将文本分词为单词和标点符号（转为小写）
-    toks = re.findall(r"\w+|[^\w\s]", text.lower())
-    # 提取所有n-gram
-    grams = [tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)]
-    # 如果有n-gram，计算重复比例并应用惩罚；否则返回0
-    return min(cap, (len(grams) - len(set(grams))) * cap * 2 / len(grams)) if grams else 0.0
+    # # 将文本分词为单词和标点符号（转为小写）
+    # toks = re.findall(r"\w+|[^\w\s]", text.lower())
+    # # 提取所有n-gram
+    # grams = [tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)]
+    # # 如果有n-gram，计算重复比例并应用惩罚；否则返回0
+    # return min(cap, (len(grams) - len(set(grams))) * cap * 2 / len(grams)) if grams else 0.0
+
+    # 步骤1: 将文本拆分成单词和标点符号（全部转小写）
+    tokens = re.findall(r"\w+|[^\w\s]", text.lower())
+    # 步骤2: 提取所有连续的n个token作为n-gram
+    ngrams = [tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)]
+    # 步骤3: 如果有n-gram，计算重复惩罚
+    if ngrams:
+        # 计算重复的n-gram数量
+        duplicate_count = len(ngrams) - len(set(ngrams))
+        # 计算重复比例，乘以cap*2，但不超过cap
+        penalty = (duplicate_count * cap * 2) / len(ngrams)
+        return min(cap, penalty)
+    else:
+        return 0.0
 
 
 # ============================================================================
@@ -135,7 +151,7 @@ def calculate_rewards(prompts, responses, reward_model):
     with torch.no_grad():  # 不计算梯度，节省显存
         reward_model_scores = []
         for i, (prompt, response) in enumerate(zip(prompts, responses)):
-            # 1. 长度惩罚：鼓励适中的响应长度
+            # 1. 长度惩罚：鼓励适中的响应长度      长度在(20,800)加0.5,否则减0.5
             rewards[i] += 0.5 if 20 <= len(response.strip()) <= 800 else -0.5
 
             # 2. 处理思维链（如果包含</think>标签）
@@ -210,7 +226,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                         max_length=args.max_seq_len, padding_side="left").to(args.device)
         # enc.input_ids: [B, P], enc.attention_mask: [B, P]
 
-        # 使用rollout引擎生成响应
+        # actor_model使用rollout引擎生成响应
         rollout_result = rollout_engine.rollout(
             prompt_ids=enc.input_ids,
             attention_mask=enc.attention_mask,
@@ -219,8 +235,8 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             temperature=0.8,  # 采样温度
         )
         # 提取生成结果
-        gen_out = rollout_result.output_ids  # 完整序列 [B, P+R]
-        completion_ids = rollout_result.completion_ids  # 生成的token [B, R]
+        gen_out = rollout_result.output_ids  # 完整序列,（Prompt + 生成） [B, P+R]
+        completion_ids = rollout_result.completion_ids  # 仅生成的token [B, R]
         prompt_lens = rollout_result.prompt_lens.to(args.device)  # 每个prompt的长度 [B]
         responses_text = rollout_result.completions  # 生成的文本列表 [B]
         old_resp_logp = rollout_result.per_token_logps.to(args.device)  # 旧策略的log概率 [B, R]
@@ -584,7 +600,8 @@ if __name__ == "__main__":
     parser.add_argument('--from_weight', default='../../../llm_data/llm106_model/pretrain_768_9900k.pth', type=str,
                         help="预训练模型文件位置，基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument("--sft_model_path", type=str, default="../../../llm_data/llm106_model/sft/", help="sft模型文件位置")
-    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
+    parser.add_argument("--reward_model_path", type=str, default="/home/hub/llm_data/llm106_model/internlm2-1_8b-reward/", help="Reward模型路径")
+    # parser.add_argument("--reward_model_path", type=str, default="internlm2-1_8b-reward", help="Reward模型路径")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
 
     # 日志和调试
@@ -644,6 +661,9 @@ if __name__ == "__main__":
         wandb_run_name = f"MiniMind-PPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
 
+
+
+
     # ========================================================================
     # 第6步：初始化模型和数据
     # ========================================================================
@@ -666,7 +686,13 @@ if __name__ == "__main__":
     critic_model = critic_model.to(args.device)
 
     # 6.4 奖励模型
+    #git clone https://gitcode.com/hf_mirrors/Shanghai_AI_Laboratory/internlm2-1_8b-reward
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
+    # try:
+    #     reward_model = OpenAssistantRewardModel(device=args.device, dtype=torch.float16)
+    # except Exception as e:
+    #     print(f"所有方案失败，使用最简单的规则评分: {e}")
+    #     reward_model = SimpleRuleReward(device=args.device, dtype=torch.float16)
 
     # 6.5 Rollout引擎（用于生成响应）
     rollout_engine = create_rollout_engine(
@@ -696,7 +722,7 @@ if __name__ == "__main__":
     mb_factor = max(1, math.ceil(args.batch_size / args.mini_batch_size))
     total_optimizer_steps = math.ceil(iters * args.epochs * args.ppo_update_iters * mb_factor / args.accumulation_steps)
     actor_scheduler = CosineAnnealingLR(actor_optimizer, T_max=total_optimizer_steps,
-                                        eta_min=args.learning_rate / 10)
+                                        eta_min=args.learning_rate / 10) #为Actor模型创建余弦退火学习率调度器，用于在训练过程中动态调整学习率
     critic_scheduler = CosineAnnealingLR(critic_optimizer, T_max=total_optimizer_steps,
                                          eta_min=args.critic_learning_rate / 10)
 

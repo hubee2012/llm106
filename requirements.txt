@@ -11,3 +11,5 @@ numpy
 tokenizers
 datasets
 swanlab
+sentencepiece
+einops

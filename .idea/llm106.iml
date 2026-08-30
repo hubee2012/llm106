@@ -9,5 +9,6 @@
     <orderEntry type="module" module-name="minimind" />
     <orderEntry type="module" module-name="llmmind" />
     <orderEntry type="module" module-name="lm_eval" />
+    <orderEntry type="module" module-name="MOSS-RLHF" />
   </component>
 </module>
