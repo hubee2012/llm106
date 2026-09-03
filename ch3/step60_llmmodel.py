@@ -90,6 +90,9 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='./', save_dir=
             # 直接从该路径加载权重文件
             weights = torch.load(from_weight, map_location=device)
             model.load_state_dict(weights, strict=False)
+    # else:
+    #     weights = torch.load(from_weight, map_location=device)
+    #     model.load_state_dict(weights, strict=False)
 
     # 调用辅助函数打印模型参数信息（可能包括总参数量、各层参数等）
     get_model_params(model, lm_config)

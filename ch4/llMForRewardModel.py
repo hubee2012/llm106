@@ -3,7 +3,6 @@ import sys
 import torch
 from transformers import  AutoModel, AutoConfig
 from transformers import AutoTokenizer
-from internlm2_compat import normalize_internlm2_rope_scaling
 
 
 # def _patch_internlm2_init_rope(config, model_path):
@@ -73,6 +72,8 @@ class LMForRewardModel:
             model_path,
             trust_remote_code=True
         )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
         # ============ 完整修复配置 ============
         # 1. 修复 rope_scaling

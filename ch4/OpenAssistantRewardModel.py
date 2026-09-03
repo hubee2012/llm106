@@ -10,9 +10,11 @@ class OpenAssistantRewardModel:
     def __init__(self, device, dtype):
         self.device = device
         self.dtype = dtype
-        model_name = "OpenAssistant/reward-model-deberta-v3-large-v2"
-        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+        # model_name = "OpenAssistant/reward-model-deberta-v3-large-v2"
+        # model_name = "OpenAssistant/reward-model-deberta-v3-large"
+        model_name = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
         try:
+            os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name, num_labels=1, torch_dtype=dtype

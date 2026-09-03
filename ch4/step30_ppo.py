@@ -31,7 +31,7 @@ from LlmConfig import Llm106Config  # 模型配置类
 from step60_llmmodel import Llm106Model, init_model  # 基础模型和初始化函数
 from rollout_engine import create_rollout_engine  # 生成引擎（用于采样）
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
-from LMForRewardModel import LMForRewardModel
+from llMForRewardModel import LMForRewardModel
 from llm_utils import llm_data_dir
 
 from OpenAssistantRewardModel import *
@@ -54,6 +54,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 warnings.filterwarnings('ignore')  # 忽略警告信息
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+os.environ["TRANSFORMERS_LEGACY_CACHE"] = "1"
 
 
 # ============================================================================
@@ -266,30 +267,30 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         # ====================================================================
         # 第4步：准备用于PPO更新的数据
         # ====================================================================
-        # 构建完整序列的掩码（排除padding）
+        # 构建完整序列的掩码（排除padding）,二值掩码矩阵，1 表示该位置是有效的token，0 表示是padding token
         full_mask = (gen_out != tokenizer.pad_token_id).long()  # [B, P+R]
-        labels = gen_out[:, 1:].clone()  # 用于计算log概率的标签 [B, P+R-1]
+        labels = gen_out[:, 1:].clone()  # 用于计算log概率的标签 [B, P+R-1],因果语言模型的标准做法
 
         B = len(prompts)
         resp_labels = completion_ids  # [B, R]
         # 计算响应部分在完整序列中的位置索引
         resp_idx = torch.arange(resp_labels.size(1), device=gen_out.device).unsqueeze(0)  # [1, R]
-        logp_pos = prompt_lens.unsqueeze(1) - 1 + resp_idx  # [B, R]
+        logp_pos = prompt_lens.unsqueeze(1) - 1 + resp_idx  # [B, R] 响应部分的第一个token位置 = prompt_lens - 1 （注意：-1是因为我们要从prompt的最后一个token之后开始）
 
         # 响应部分的掩码
         resp_pad_mask = rollout_result.completion_mask.to(args.device).bool()  # [B, R]
         resp_lengths = resp_pad_mask.sum(dim=1)  # [B]
         valid_resp = resp_lengths > 0  # 有效响应的mask
 
-        # 处理EOS token（提前终止）
+        # 处理EOS token（提前终止）,确保响应序列在遇到EOS token时截断，不把EOS之后的内容（通常是padding）计入有效长度。
         eos_mask = resp_labels.eq(tokenizer.eos_token_id) & resp_pad_mask
         has_eos = eos_mask.any(dim=1)
         eos_pos = torch.argmax(eos_mask.int(), dim=1)
-        resp_lengths = torch.where(has_eos, eos_pos + 1, resp_lengths).long().clamp(min=1)
+        resp_lengths = torch.where(has_eos, eos_pos + 1, resp_lengths).long().clamp(min=1)#如果包含EOS：响应长度 = EOS位置 + 1（包含EOS本身）,如果不包含EOS：保持原来的长度
 
-        # 创建策略和价值函数的掩码（只关注有效token）
-        resp_policy_mask = ((resp_idx < resp_lengths.unsqueeze(1)) & resp_pad_mask).float()
-        resp_value_mask = resp_policy_mask.clone()
+        # 创建策略和价值函数的掩码（只关注有效token）,用于精确控制PPO训练中哪些位置需要计算策略损失和价值损失。
+        resp_policy_mask = ((resp_idx < resp_lengths.unsqueeze(1)) & resp_pad_mask).float() #标记响应序列中哪些token应该参与策略损失计算
+        resp_value_mask = resp_policy_mask.clone()  #创建策略掩码的副本，用于价值函数训练
 
         # ====================================================================
         # 第5步：计算优势函数（GAE - Generalized Advantage Estimation）
@@ -298,16 +299,16 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             # 5.1 获取Critic模型的价值估计
             critic_for_rollout = critic_model.module if isinstance(critic_model,
                                                                    DistributedDataParallel) else critic_model
-            values_seq = critic_for_rollout(input_ids=gen_out, attention_mask=full_mask)
-            old_resp_values = values_seq.gather(1, logp_pos) * resp_value_mask  # [B, R]
+            values_seq = critic_for_rollout(input_ids=gen_out, attention_mask=full_mask)    #每个token一个打分
+            old_resp_values = values_seq.gather(1, logp_pos) * resp_value_mask  # [B, R]    #从完整序列的价值中，提取响应部分对应的价值
 
-            # 5.2 获取参考模型的log概率（用于KL散度惩罚）
-            ref_resp_logp = F.log_softmax(ref_model(input_ids=gen_out, attention_mask=full_mask).logits[:, :-1],
-                                          dim=-1).gather(2, labels.unsqueeze(-1)).squeeze(-1).gather(1, logp_pos)
+            # 5.2 获取参考模型的log概率（用于KL散度惩罚）输出: [B, R]
+            ref_resp_logp = F.log_softmax(ref_model(input_ids=gen_out, attention_mask=full_mask).logits[:, :-1],##[B, P+R-1, vocab_size] 去掉最后一个位置的预测，因为会预测下一个token，多出一个
+                                          dim=-1).gather(2, labels.unsqueeze(-1)).squeeze(-1).gather(1, logp_pos)##gather在dim=2（词汇表维度）上，根据labels中的token id提取对应的log概率
 
-            # 5.3 构建token级别的奖励
+            # 5.3 构建token级别的奖励，将序列级别的外部奖励（来自reward model的评分）分配到响应序列的最后一个token上。
             token_rewards = torch.zeros_like(old_resp_logp)
-            last_idx = resp_lengths - 1  # [B]
+            last_idx = resp_lengths - 1  # [B]计算最后一个有效token的索引
             # 只在最后一个token上加上外部奖励
             token_rewards[torch.arange(B, device=args.device)[valid_resp], last_idx[valid_resp]] += rewards[valid_resp]
 
@@ -317,13 +318,13 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             advs_rev = []
             # 从后向前计算GAE
             for t in reversed(range(gen_len)):
-                nv = old_resp_values[:, t + 1] if t < gen_len - 1 else 0.0
-                # TD误差: δ = r_t + γ * V(s_{t+1}) - V(s_t)
+                nv = old_resp_values[:, t + 1] if t < gen_len - 1 else 0.0 #下一状态优势
+                # TD误差: δ = r_t + γ * V(s_{t+1}) - V(s_t)           当前token的奖励 + 折扣因子*下一个状态的价值 - 当前状态的价值
                 delta = token_rewards[:, t] + args.gamma * nv - old_resp_values[:, t]
-                # GAE: A_t = δ_t + (γλ)δ_{t+1} + ...
+                # GAE公式，GAE: A_t = δ_t + (γλ)δ_{t+1} + ...      ，其中 λ (lam) 是GAE参数，控制偏差-方差权衡
                 lastgaelam = delta + args.gamma * args.lam * lastgaelam
                 advs_rev.append(lastgaelam)
-            advantages = torch.stack(advs_rev[::-1], dim=1)  # [B, R]
+            advantages = torch.stack(advs_rev[::-1], dim=1)  # [B, R]，将倒序的优势值反转回原始顺序
             returns = advantages + old_resp_values  # [B, R] 目标回报
 
             # 5.5 标准化优势（提高训练稳定性）
@@ -364,20 +365,20 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 mb_values_seq = critic_unwrapped(input_ids=gen_out[inds], attention_mask=full_mask[inds])
                 mb_resp_values = mb_values_seq.gather(1, logp_pos[inds])
 
-                # 6.2 获取当前策略的log概率（在混合精度上下文中）
+                # 6.2 获取当前策略的log概率（在混合精度上下文中）,用于与旧策略比较
                 with autocast_ctx:
                     res = actor_unwrapped(input_ids=gen_out[inds], attention_mask=full_mask[inds])
-                    # MoE辅助损失（如果使用MoE）
+                    # MoE辅助损失（如果使用MoE）,防止某些专家网络被过度使用或完全忽略,促进专家网络之间的负载均衡
                     aux_loss = res.aux_loss if lm_config.use_moe else torch.tensor(0.0, device=args.device)
                     # 计算响应部分的log概率
-                    mb_resp_logp = F.log_softmax(res.logits[:, :-1], dim=-1).gather(2,
-                                                                                    labels[inds].unsqueeze(-1)).squeeze(
-                        -1).gather(1, logp_pos[inds])
+                    mb_resp_logp = F.log_softmax(res.logits[:, :-1], dim=-1).gather(2,# 在词汇表维度上计算log概率
+                                                                                    labels[inds].unsqueeze(-1)).squeeze(# 根据labels中的token id提取对应的log概率
+                        -1).gather(1, logp_pos[inds])# 使用logp_pos只提取响应位置的log概率
 
-                # 6.3 计算概率比 r(θ) = π_θ / π_old
+                # 6.3 计算概率比 r(θ) = π_θ / π_old, 可用于重要性采样
                 log_ratio = mb_resp_logp - old_resp_logp[inds]
 
-                # 调试：检查log_ratio的量级（确保ratio≈1）
+                # 调试：检查log_ratio的量级（确保ratio≈1）,监控log_ratio,稳定训练
                 if args.debug_log_ratio and ppo_epoch == 0 and i == 0 and is_main_process():
                     _lr = log_ratio.detach()
                     _m = resp_policy_mask[inds].bool()
@@ -390,12 +391,12 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                                f"dropout={getattr(lm_config, 'dropout', None)} "
                                f"training={actor_unwrapped.training}")
 
-                # 6.4 计算近似KL散度（用于早停判断）
+                # 6.4 计算近似KL散度（用于早停判断）,KL散度的定义:KL(π_θ || π_old) = E_{a~π_θ}[log(π_θ(a)/π_old(a))];当策略变化很小时（θ ≈ θ_old），KL散度可以近似为：KL(π_θ || π_old) ≈ 1/2 * (log(π_θ/π_old))^2
                 approx_kl = (0.5 * (log_ratio ** 2) * resp_policy_mask[inds]).sum() / resp_policy_mask[
                     inds].sum().clamp(min=1)
 
                 # 同步各卡的KL值（防止某卡早停导致死锁）
-                approx_kl_val = approx_kl.detach().clone()
+                approx_kl_val = approx_kl.detach().clone()  #创建一个不参与梯度计算的KL值副本
                 if dist.is_initialized():
                     dist.all_reduce(approx_kl_val, op=dist.ReduceOp.AVG)
 
@@ -410,26 +411,26 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 clipfrac = ((((ratio - 1.0).abs() > args.clip_epsilon).float() * resp_policy_mask[inds]).sum()
                             / resp_policy_mask[inds].sum().clamp(min=1))
 
-                # KL散度惩罚（相对于参考模型）
+                # KL散度惩罚（相对于参考模型），ref_resp_logp: 参考模型的log概率，mb_resp_logp: 当前策略的log概率（正在训练的），KL(π_ref || π_θ) = Σ π_ref * d  = Σ π_θ * exp(d) * d    一种在采样时易于估计的形式，在实际训练中，我们只能从当前策略 π_θ 采样，而不是从 π_ref 采样。重要性采样：KL(π_ref || π_θ) = E_{x~π_ref}[d] = E_{x~π_θ}[ (π_ref/π_θ) * d ]= E_{x~π_θ}[ exp(d) * d ]；使用泰勒展开得到 exp(d) - d - 1
                 kl_ref_penalty = ((torch.exp(ref_resp_logp[inds] - mb_resp_logp) -
                                    (ref_resp_logp[inds] - mb_resp_logp) - 1.0)
-                                  * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)
+                                  * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)   #应用掩码，归一化
 
-                # 6.5.1 PPO策略损失（带裁剪的代理目标）
+                # 6.5.1 PPO策略损失（带裁剪的代理目标），L = -E[min(r*A, clip(r)*A)]
                 policy_loss = ((torch.max(-advantages[inds] * ratio,
                                           -advantages[inds] * torch.clamp(ratio,
                                                                           1.0 - args.clip_epsilon,
-                                                                          1.0 + args.clip_epsilon))
+                                                                          1.0 + args.clip_epsilon)) #PPO裁剪损失
                                 * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)
-                               + args.kl_coef * kl_ref_penalty)
+                               + args.kl_coef * kl_ref_penalty) #KL散度惩罚
 
-                # 6.5.2 价值函数损失（带裁剪）
+                # 6.5.2 价值函数损失（带裁剪）,用于训练Critic网络，使其能够更准确地估计状态价值
                 value_loss = 0.5 * (torch.max((mb_resp_values - returns[inds]) ** 2,
                                               (torch.clamp(mb_resp_values,
                                                            old_resp_values[inds] - args.cliprange_value,
                                                            old_resp_values[inds] + args.cliprange_value) - returns[
-                                                   inds]) ** 2)
-                                    * resp_value_mask[inds]).sum() / resp_value_mask[inds].sum().clamp(min=1)
+                                                   inds]) ** 2)#价值损失也需要裁剪以防止Critic网络更新过快
+                                    * resp_value_mask[inds]).sum() / resp_value_mask[inds].sum().clamp(min=1)   #应用掩码并归一化
 
                 kl = approx_kl_val
                 kl_ref = kl_ref_penalty.detach()
@@ -441,15 +442,15 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 else:
                     loss = (policy_loss + args.vf_coef * value_loss + aux_loss) / args.accumulation_steps
 
-                loss.backward()
+                loss.backward() # loss 反向传播，计算梯度（求导），每个参数的 .grad 属性被填充，但参数本身没有变化
 
                 # 记录损失值（用于日志）
-                policy_loss_sum += policy_loss.item()
-                value_loss_sum += value_loss.item()
-                kl_sum += kl.item()
-                kl_ref_sum += kl_ref.item()
-                clipfrac_sum += clipfrac.item()
-                aux_loss_sum += aux_loss.item()
+                policy_loss_sum += policy_loss.item()   #累积策略损失
+                value_loss_sum += value_loss.item() #累积价值损失
+                kl_sum += kl.item() #累积近似KL散度
+                kl_ref_sum += kl_ref.item() #累积参考模型KL散度
+                clipfrac_sum += clipfrac.item() # 累积裁剪比例
+                aux_loss_sum += aux_loss.item() #累积辅助损失
                 log_count += 1
 
                 # 6.7 梯度累积和优化器步进
@@ -471,13 +472,13 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
 
         # 处理剩余梯度（当grad_accum_step不是accumulation_steps的整数倍时）
         if grad_accum_step % args.accumulation_steps != 0:
-            clip_grad_norm_(actor_model.parameters(), args.grad_clip)
+            clip_grad_norm_(actor_model.parameters(), args.grad_clip)   #防止梯度爆炸，将梯度的范数限制在指定范围内
             clip_grad_norm_(critic_model.parameters(), args.grad_clip)
-            actor_optimizer.step()
+            actor_optimizer.step()  #参数更新
             critic_optimizer.step()
             actor_scheduler.step()
             critic_scheduler.step()
-            actor_optimizer.zero_grad()
+            actor_optimizer.zero_grad() #梯度清零
             critic_optimizer.zero_grad()
 
         # ====================================================================
@@ -566,6 +567,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=3e-7, help="Actor学习率")
     parser.add_argument("--critic_learning_rate", type=float, default=5e-7, help="Critic学习率")
+    parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
 
     # 设备和精度
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
@@ -599,9 +601,11 @@ if __name__ == "__main__":
     # 模型路径
     parser.add_argument('--from_weight', default='../../../llm_data/llm106_model/pretrain_768_9900k.pth', type=str,
                         help="预训练模型文件位置，基于哪个权重训练，为none则不基于任何权重训练")
-    parser.add_argument("--sft_model_path", type=str, default="../../../llm_data/llm106_model/sft/", help="sft模型文件位置")
-    parser.add_argument("--reward_model_path", type=str, default="/home/hub/llm_data/llm106_model/internlm2-1_8b-reward/", help="Reward模型路径")
+    parser.add_argument("--sft_model_path", type=str, default="../../../llm_data/llm106_model/sft/full_sft_768_9900k.pth", help="sft模型文件位置")
+    # parser.add_argument("--reward_model_path", type=str, default="/home/hub/llm_data/llm106_model/internlm2-1_8b-reward/", help="Reward模型路径")
     # parser.add_argument("--reward_model_path", type=str, default="internlm2-1_8b-reward", help="Reward模型路径")
+    parser.add_argument("--reward_model_path", type=str, default="/home/hub/llm_data/llm106_model/Skywork-Reward-V2-Llama-3.2-1B", help="Reward模型路径")
+
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
 
     # 日志和调试
@@ -670,10 +674,10 @@ if __name__ == "__main__":
     base_weight = args.from_weight
     sft_model_path=args.sft_model_path
     # 6.1 Actor模型（策略网络）
-    actor_model, tokenizer = init_model(lm_config, base_weight,tokenizer_path='../ch3',save_dir=sft_model_path, device=args.device)
+    actor_model, tokenizer = init_model(lm_config, from_weight=sft_model_path,tokenizer_path='../ch3', device=args.device)
 
     # 6.2 参考模型（用于KL散度约束，冻结参数）
-    ref_model, _ = init_model(lm_config, base_weight,tokenizer_path='../ch3', save_dir=sft_model_path,device=args.device)
+    ref_model, _ = init_model(lm_config, from_weight=base_weight,tokenizer_path='../ch3',device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
 
     # 6.3 Critic模型（价值网络）
@@ -687,12 +691,27 @@ if __name__ == "__main__":
 
     # 6.4 奖励模型
     #git clone https://gitcode.com/hf_mirrors/Shanghai_AI_Laboratory/internlm2-1_8b-reward
-    reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
+    # reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
     # try:
     #     reward_model = OpenAssistantRewardModel(device=args.device, dtype=torch.float16)
     # except Exception as e:
     #     print(f"所有方案失败，使用最简单的规则评分: {e}")
     #     reward_model = SimpleRuleReward(device=args.device, dtype=torch.float16)
+
+    #"https://hf-mirror.com/Skywork"
+    from skyworkRewardModel import SkyworkRewardModel ,SkyworkRewardModel_Local # 假设上面的类保存在 skywork_reward.py
+    print(f"当前HF_ENDPOINT: {os.environ.get('HF_ENDPOINT')}")  # 确认输出为 https://hf-mirror.com
+    # reward_model = SkyworkRewardModel(
+    #     model_name="Skywork/Skywork-Reward-V2-Llama-3.2-1B",  # 根据显存选择
+    #     use_quantization=False,  # 显存不足可设为True
+    # )
+    reward_model = SkyworkRewardModel_Local(
+        model_path=args.reward_model_path,  # 根据显存选择
+        device=args.device,
+        use_quantization=False,  # 显存不足可设为True
+    )
+
+
 
     # 6.5 Rollout引擎（用于生成响应）
     rollout_engine = create_rollout_engine(
