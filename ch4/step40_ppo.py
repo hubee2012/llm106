@@ -33,6 +33,7 @@ from rollout_engine import create_rollout_engine  # 生成引擎（用于采样�
 from utils import is_main_process, Logger, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler
 from llMForRewardModel import LMForRewardModel
 from llm_utils import llm_data_dir
+from skyworkRewardModel import SkyworkRewardModel, SkyworkRewardModel_Local  # 假设上面的类保存在 skywork_reward.py
 
 from OpenAssistantRewardModel import *
 from SimpleRuleReward import SimpleRuleReward
@@ -391,7 +392,8 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                                f"dropout={getattr(lm_config, 'dropout', None)} "
                                f"training={actor_unwrapped.training}")
 
-                # 6.4 计算近似KL散度（用于早停判断）,KL散度的定义:KL(π_θ || π_old) = E_{a~π_θ}[log(π_θ(a)/π_old(a))];当策略变化很小时（θ ≈ θ_old），KL散度可以近似为：KL(π_θ || π_old) ≈ 1/2 * (log(π_θ/π_old))^2
+                # 6.4 计算近似KL散度（用于早停判断）,KL散度的定义:KL(π_θ || π_old) = E_{a~π_θ}[log(π_θ(a)/π_old(a))];
+                # 当策略变化很小时（θ ≈ θ_old），KL散度可以近似为：KL(π_θ || π_old) ≈ 1/2 * (log(π_θ/π_old))^2
                 approx_kl = (0.5 * (log_ratio ** 2) * resp_policy_mask[inds]).sum() / resp_policy_mask[
                     inds].sum().clamp(min=1)
 
@@ -411,7 +413,9 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 clipfrac = ((((ratio - 1.0).abs() > args.clip_epsilon).float() * resp_policy_mask[inds]).sum()
                             / resp_policy_mask[inds].sum().clamp(min=1))
 
-                # KL散度惩罚（相对于参考模型），ref_resp_logp: 参考模型的log概率，mb_resp_logp: 当前策略的log概率（正在训练的），KL(π_ref || π_θ) = Σ π_ref * d  = Σ π_θ * exp(d) * d    一种在采样时易于估计的形式，在实际训练中，我们只能从当前策略 π_θ 采样，而不是从 π_ref 采样。重要性采样：KL(π_ref || π_θ) = E_{x~π_ref}[d] = E_{x~π_θ}[ (π_ref/π_θ) * d ]= E_{x~π_θ}[ exp(d) * d ]；使用泰勒展开得到 exp(d) - d - 1
+                # KL散度惩罚（相对于参考模型），ref_resp_logp: 参考模型的log概率，mb_resp_logp: 当前策略的log概率（正在训练的）
+                # ，KL(π_ref || π_θ) = Σ π_ref * d  = Σ π_θ * exp(d) * d    一种在采样时易于估计的形式，在实际训练中，我们只能从当前策略 π_θ 采样，而不是从 π_ref 采样。
+                # 重要性采样：KL(π_ref || π_θ) = E_{x~π_ref}[d] = E_{x~π_θ}[ (π_ref/π_θ) * d ]= E_{x~π_θ}[ exp(d) * d ]；使用泰勒展开得到 exp(d) - d - 1
                 kl_ref_penalty = ((torch.exp(ref_resp_logp[inds] - mb_resp_logp) -
                                    (ref_resp_logp[inds] - mb_resp_logp) - 1.0)
                                   * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)   #应用掩码，归一化
@@ -610,7 +614,7 @@ if __name__ == "__main__":
 
     # 日志和调试
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-PPO", help="wandb项目名")
+    parser.add_argument("--wandb_project", type=str, default="llm106-PPO", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速")
     parser.add_argument("--debug_mode", action="store_true", help="是否打印训练调试采样")
     parser.add_argument("--debug_interval", type=int, default=20, help="debug模式下每隔多少step打印一次采样")
@@ -662,7 +666,7 @@ if __name__ == "__main__":
 
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         resume = 'must' if wandb_id else None
-        wandb_run_name = f"MiniMind-PPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
+        wandb_run_name = f"llm106-PPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
 
 
@@ -699,7 +703,6 @@ if __name__ == "__main__":
     #     reward_model = SimpleRuleReward(device=args.device, dtype=torch.float16)
 
     #"https://hf-mirror.com/Skywork"
-    from skyworkRewardModel import SkyworkRewardModel ,SkyworkRewardModel_Local # 假设上面的类保存在 skywork_reward.py
     print(f"当前HF_ENDPOINT: {os.environ.get('HF_ENDPOINT')}")  # 确认输出为 https://hf-mirror.com
     # reward_model = SkyworkRewardModel(
     #     model_name="Skywork/Skywork-Reward-V2-Llama-3.2-1B",  # 根据显存选择
