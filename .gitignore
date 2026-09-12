@@ -5,3 +5,5 @@ swanlog/
 **/swanlog/
 checkpoints/
 **/checkpoints/
+*.iml
+.idea/
