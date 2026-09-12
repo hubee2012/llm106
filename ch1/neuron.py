@@ -14,7 +14,8 @@
 """
 
 from __future__ import annotations
-
+import matplotlib
+matplotlib.use('Agg')  # 禁用GUI后端
 import numpy as np
 import matplotlib
 import warnings
@@ -303,12 +304,12 @@ def demo_train_with_plot(args=None) -> None:
 
     # 生成数据：标签大致由 x0 + x1 > 0 决定
     rng = np.random.default_rng(args.seed if hasattr(args, 'seed') else 0)
-    X = rng.normal(size=(100, 2))  # 100个样本，2个特征，标准正态分布
+    X = rng.normal(size=(100, 2),loc=[0.4,0.5],scale=1)  # 100个样本，2个特征，标准正态分布
     #y = (X[:, 0] + X[:, 1] > 0).astype(float)  # 标签：x0+x1>0为1，否则为0
     # 原始线性可分标签,
     # 第一列X[:, 0]，第二列X[:, 1]
     #决策边界是直线：x₁ + x₂ = 0，即 x₂ = -x₁
-    y_true = (X[:, 0] + X[:, 1] > 0).astype(float)
+    y_true = (X[:, 0] + X[:, 1] > 0.9).astype(float)
 
     # 加入小的随机波动（标签翻转噪声）
     noise_prob = 0.05  # 10% 的样本标签被翻转
@@ -497,8 +498,8 @@ def demo_train_with_plot(args=None) -> None:
         except:
             pass
 
-        # 放慢显示速度，每次暂停2.5秒
-        plt.pause(1)
+        # 放慢显示速度，每次暂停0.5秒
+        plt.pause(0.5)
 
     # 保持最后一个状态
     plot_decision_boundary(ax6, neuron, X, y, epochs)
@@ -535,7 +536,7 @@ def main():
     parser = argparse.ArgumentParser(description='单神经元训练示例')
     parser.add_argument('--epochs', type=int, default=30, help='训练轮数（默认30）')
     parser.add_argument('--batch_size', type=int, default=2, help='批次大小')
-    parser.add_argument('--learning_rate', type=float, default=0.5, help='学习率')
+    parser.add_argument('--learning_rate', type=float, default=0.1, help='学习率')
     parser.add_argument('--swanlab_project', type=str, default='neuron-training', help='SwanLab项目名称')
     parser.add_argument('--swanlab_run_name', type=str, default=None, help='SwanLab运行名称')
     parser.add_argument('--swanlab_id', type=str, default=None, help='SwanLab运行ID（用于恢复）')

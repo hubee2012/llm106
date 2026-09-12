@@ -1,5 +1,0 @@
-tokenizers
-datasets
-swanlab
-uvicorn
-fastapi
