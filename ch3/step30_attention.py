@@ -107,9 +107,6 @@ class Attention(nn.Module):
                 dropout_p=self.dropout if self.training else 0.0,
                 is_causal=self.is_causal)
         else:
-            # ============================================================
-            # 慢速路径：手写注意力
-            # ------------------------------------------------------------
             # 触发场景（任一条成立就走这里）：
             #   1. 未启用 SDPA（老版本 PyTorch 或 config.flash_attn=False）
             #   2. seq_len == 1（推理单 token，SDPA 的 is_causal 语义对不上）
@@ -135,8 +132,7 @@ class Attention(nn.Module):
                 # scores[:, :, :, -seq_len:] 取「最后 seq_len 列」
                 #   - 训练 / 首帧：S_q = S_k = seq_len，取全部列
                 #   - 推理单 token：S_q = 1，S_k = S_past+1，取最后 1 列（当前 token 自己的 K）
-                #     ★ 前面 S_past 列（历史 KV）不在切片内，因此不会被加 -inf，
-                #       正好符合「当前 token 应看到全部历史」的语义。
+                #     ★ 前面 S_past 列（历史 KV）不在切片内，因此不会被加 -inf，正好符合「当前 token 应看到全部历史」的语义。
                 #
                 # torch.full((seq_len, seq_len), -inf)：生成全 -inf 方阵
                 # .triu(1)：保留主对角线「以上」（不含对角线），其余置 0
@@ -156,9 +152,6 @@ class Attention(nn.Module):
             # ---- 3) Padding 掩码 ----
             if attention_mask is not None:
                 # attention_mask: (B, S_k)，1=有效，0=padding
-                #   注意长度必须等于当前 KV 总长（历史 + 新增），
-                #   否则 unsqueeze 后广播形状对不上。
-                #
                 # unsqueeze(1).unsqueeze(2) -> (B, 1, 1, S_k)
                 #   与 scores (B, H, S_q, S_k) 广播，作用到每个 head、每个 query 位置。
                 #
@@ -172,16 +165,6 @@ class Attention(nn.Module):
                 scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
 
             # ---- 4) Softmax + Dropout + 加权求和 ----
-            # F.softmax(scores.float(), dim=-1)
-            #   - dim=-1：对 key 维（最后一维）做归一化，得到注意力权重
-            #   - .float()：先转 fp32 再 softmax，避免 fp16/bf16 下 exp 溢出或精度丢失
-            #   - 因果 / padding 位置的 -inf/-1e9 经 exp 后为 0，权重精确为 0
-            #
-            # .type_as(xq)：把权重转回原 dtype（与 xv 一致，才能做 matmul）
-            #
-            # self.attn_dropout(...)：训练时随机置零部分注意力权重（正则化）
-            #                          推理时 training=False，Dropout 是恒等映射
-            #
             # @ xv：加权求和
             #   attn: (B, H, S_q, S_k)
             #   xv  : (B, H, S_k, D)
@@ -192,48 +175,3 @@ class Attention(nn.Module):
         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)
         output = self.resid_dropout(self.o_proj(output))
         return output, past_kv
-
-# class Attention(nn.Module):
-#     def __init__(self, config: LlmConfig):
-#         super().__init__()
-#         self.num_key_value_heads = config.num_attention_heads if config.num_key_value_heads is None else config.num_key_value_heads
-#         self.n_local_heads = config.num_attention_heads
-#         self.n_local_kv_heads = self.num_key_value_heads
-#         self.n_rep = self.n_local_heads // self.n_local_kv_heads
-#         self.head_dim = config.head_dim
-#         self.is_causal = True
-#         self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False)
-#         self.k_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-#         self.v_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-#         self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
-#         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-#         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-#         self.attn_dropout = nn.Dropout(config.dropout)
-#         self.resid_dropout = nn.Dropout(config.dropout)
-#         self.dropout = config.dropout
-#         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and config.flash_attn
-#
-#     def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
-#         bsz, seq_len, _ = x.shape
-#         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
-#         xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-#         xk = xk.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
-#         xv = xv.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
-#         xq, xk = self.q_norm(xq), self.k_norm(xk)
-#         cos, sin = position_embeddings
-#         xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)
-#         if past_key_value is not None:
-#             xk = torch.cat([past_key_value[0], xk], dim=1)
-#             xv = torch.cat([past_key_value[1], xv], dim=1)
-#         past_kv = (xk, xv) if use_cache else None
-#         xq, xk, xv = (xq.transpose(1, 2), repeat_kv(xk, self.n_rep).transpose(1, 2), repeat_kv(xv, self.n_rep).transpose(1, 2))
-#         if self.flash and (seq_len > 1) and (not self.is_causal or past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
-#             output = F.scaled_dot_product_attention(xq, xk, xv, dropout_p=self.dropout if self.training else 0.0, is_causal=self.is_causal)
-#         else:
-#             scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
-#             if self.is_causal: scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
-#             if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-#             output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
-#         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)
-#         output = self.resid_dropout(self.o_proj(output))
-#         return output, past_kv
