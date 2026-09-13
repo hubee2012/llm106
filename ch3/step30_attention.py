@@ -107,13 +107,7 @@ class Attention(nn.Module):
                 dropout_p=self.dropout if self.training else 0.0,
                 is_causal=self.is_causal)
         else:
-            # 触发场景（任一条成立就走这里）：
-            #   1. 未启用 SDPA（老版本 PyTorch 或 config.flash_attn=False）
-            #   2. seq_len == 1（推理单 token，SDPA 的 is_causal 语义对不上）
-            #   3. is_causal=True 且 past_key_value 不为 None（非首帧，Q/K 长度不等）
-            #   4. attention_mask 含 padding（SDPA 不支持额外的 padding mask）
             scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
             # ---- 2) 因果掩码（causal mask）----
             #is_causal=True 表示：这是一个自回归（autoregressive）的因果语言模型。
             #即：预测 token t 时，只能看到 0..t，不能看到未来 t+1, t+2, ...
