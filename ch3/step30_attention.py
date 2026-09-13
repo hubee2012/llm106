@@ -33,7 +33,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
             .reshape(bs, slen, num_key_value_heads * n_rep, head_dim))
 
 class Attention(nn.Module):
-    def __init__(self, config: MiniMindConfig):
+    def __init__(self, config: LlmConfig):
         super().__init__()
         # KV 头数：若配置为 None 则退化为 MHA
         self.num_key_value_heads = config.num_attention_heads if config.num_key_value_heads is None else config.num_key_value_heads
