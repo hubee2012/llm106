@@ -112,28 +112,13 @@ class Attention(nn.Module):
             #   2. seq_len == 1（推理单 token，SDPA 的 is_causal 语义对不上）
             #   3. is_causal=True 且 past_key_value 不为 None（非首帧，Q/K 长度不等）
             #   4. attention_mask 含 padding（SDPA 不支持额外的 padding mask）
-            # 慢速路径是通用兜底：对任意 S_q / S_k 组合都正确。
-            # ============================================================
-
-            # ---- 1) 计算原始注意力分数 ----
-            # xq: (B, H, S_q, D)     本次 query
-            # xk: (B, H, S_k, D)     本次 key（已含历史，因为前面 cat 过）
-            # xk.transpose(-2, -1): (B, H, D, S_k)
-            # xq @ xk^T -> (B, H, S_q, S_k)
-            # scores[b,h,i,j] = query 位置 i 对 key 位置 j 的原始相似度
             scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
-            #                                ↑ 缩放因子 1/sqrt(D)，防止点积随 D 增大而爆炸，
-            #                                  保持 softmax 输入方差稳定，梯度不消失。
 
             # ---- 2) 因果掩码（causal mask）----
             #is_causal=True 表示：这是一个自回归（autoregressive）的因果语言模型。
             #即：预测 token t 时，只能看到 0..t，不能看到未来 t+1, t+2, ...
             if self.is_causal:
                 # scores[:, :, :, -seq_len:] 取「最后 seq_len 列」
-                #   - 训练 / 首帧：S_q = S_k = seq_len，取全部列
-                #   - 推理单 token：S_q = 1，S_k = S_past+1，取最后 1 列（当前 token 自己的 K）
-                #     ★ 前面 S_past 列（历史 KV）不在切片内，因此不会被加 -inf，正好符合「当前 token 应看到全部历史」的语义。
-                #
                 # torch.full((seq_len, seq_len), -inf)：生成全 -inf 方阵
                 # .triu(1)：保留主对角线「以上」（不含对角线），其余置 0
                 #   例如 seq_len=4 得到：
@@ -154,21 +139,12 @@ class Attention(nn.Module):
                 # attention_mask: (B, S_k)，1=有效，0=padding
                 # unsqueeze(1).unsqueeze(2) -> (B, 1, 1, S_k)
                 #   与 scores (B, H, S_q, S_k) 广播，作用到每个 head、每个 query 位置。
-                #
-                # (1.0 - mask)：把 1→0，0→1
-                #   即：有效位 → 0（不加惩罚）
-                #       padding 位 → 1 * -1e9 = -1e9（近似 -inf，softmax 后≈0）
-                #
-                # ★ 这里用 -1e9 而非 -inf，是为了避免与因果掩码的 -inf 相加时
+                #   这里用 -1e9 而非 -inf，是为了避免与因果掩码的 -inf 相加时
                 #   出现 -inf + inf = nan 的边界情况（虽然本实现里因果掩码是 +=，
                 #   但保持用有限大负数更稳妥、兼容性更好）。
                 scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
 
             # ---- 4) Softmax + Dropout + 加权求和 ----
-            # @ xv：加权求和
-            #   attn: (B, H, S_q, S_k)
-            #   xv  : (B, H, S_k, D)
-            #   out : (B, H, S_q, D)  —— 每个 query 位置的注意力输出
             output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
 
         # ---- 8) 合并多头并输出投影 ----
