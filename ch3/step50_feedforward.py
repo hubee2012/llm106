@@ -124,6 +124,7 @@ class MOEFeedForward(nn.Module):
             load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)
             # 辅助损失 = sum(load * 平均路由概率) * num_experts * 系数
             # 该损失鼓励负载分布均匀（避免某些专家被过度使用）
+            # 核心思想: 用「专家被选中的硬频率 load」作为权重，去惩罚「专家被选中的软概率 scores」，迫使 gate 把 token 更均匀地分给各专家。
             self.aux_loss = (
                 (load * scores.mean(0)).sum()
                 * self.config.num_experts
