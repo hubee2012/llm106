@@ -120,7 +120,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MiniMind Pretraining")
+    parser = argparse.ArgumentParser(description="llm106 Pretraining")
     parser.add_argument("--save_dir", type=str, default="../../../llm_data/llm106_model", help="模型保存目录")
     parser.add_argument('--save_weight', default='pretrain', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
