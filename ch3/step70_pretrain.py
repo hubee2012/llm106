@@ -140,7 +140,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default=llm_data_dir + "/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
-    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
+    parser.add_argument("--use_wandb", action="store_false", help="是否使用wandb")
     parser.add_argument("--wandb_project", type=str, default="llm106_pretrain", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1],
                         help="是否使用torch.compile加速（0=否，1=是）")
